@@ -4,7 +4,25 @@ Go STDIO Model Context Protocol server for the ISC Kea API. Supports direct
 daemon HTTP/HTTPS endpoints and the older Kea Control Agent. All Kea access
 goes through the API; no database connection is required.
 
-Configuration uses a TOML dotfile loaded with go-kit `confx`.
+Configuration uses a TOML dotfile.
+
+## Installation
+
+Install with Go 1.27.2 or newer:
+
+```sh
+go install github.com/rannday/kea-mcp@latest
+```
+
+Add `GOBIN` (or `GOPATH/bin` when `GOBIN` is unset) to your `PATH`, then use
+`kea-mcp` as the command in your MCP client configuration. This installation
+path requires a published version containing the root executable.
+
+To run from a source checkout:
+
+```sh
+go run . --config /absolute/path/to/.kea-mcp.toml
+```
 
 ## API modes
 
@@ -68,7 +86,7 @@ restart the server after changing it. Missing or unreadable password files stop
 startup. Both empty credentials are rejected by Basic Auth. Keep credential files
 out of version control; the root TOML dotfile is ignored by Git.
 
-### Agent configuration
+### MCP client configuration
 
 Codex starts this server using `command` and `args`, just like other STDIO
 MCP servers. Add this to your Codex `config.toml`:
@@ -100,49 +118,6 @@ Clients using JSON configuration can use:
 }
 ```
 
-## Run and develop
-
-Building from source requires Go 1.27.2 or newer. The minimum version includes
-the standard library security fixes required by this server.
-
-Install with Go:
-
-```sh
-go install github.com/rannday/kea-mcp@latest
-```
-
-Add `GOBIN` (or `GOPATH/bin` when `GOBIN` is unset) to your `PATH`, then use
-`kea-mcp` as the command in your agent's MCP configuration. This installation
-path requires a published version containing the root executable.
-
-From a checkout:
-
-```sh
-go run . --config /absolute/path/to/.kea-mcp.toml
-go test ./...
-go vet ./...
-go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-```
-
-The vulnerability scan runs without installing a `govulncheck` executable.
-
-For distribution, prefer standalone binaries for Windows, macOS, and Linux,
-with amd64 and arm64 builds. Binary users do not need Go installed.
-Release packaging uses the pinned [go-kit buildx](https://github.com/rannday/go-kit/tree/main/modules/buildx)
-Go tool. To create archives and checksums for all six OS/CPU combinations:
-
-```sh
-go tool buildx -v 0.1.0 --name kea-mcp --main . --target windows/amd64 --target windows/arm64 --target linux/amd64 --target linux/arm64 --target darwin/amd64 --target darwin/arm64
-```
-
-Choose the release version explicitly. Output goes to `dist/<version>`.
-This repository does not yet automate release publishing.
-
-Runtime configuration uses [confx](https://github.com/rannday/go-kit/tree/main/modules/confx);
-structured stderr logging uses [logx](https://github.com/rannday/go-kit/tree/main/modules/logx).
-These modules and buildx are pinned in `go.mod`; no sibling checkout is needed.
-HTTP request and response bodies are not logged.
-
 ## Tools and resources
 
 - Command-specific tools use stable names: `status-get` becomes `kea_status_get`,
@@ -173,8 +148,8 @@ Run `kea_discover` after daemon or hook changes. Refresh adds/removes tools and
 sends MCP tool-list change notifications; the agent client must support refreshing
 its inventory. Failed services produce error entries alongside successful results.
 If every service is unavailable, discovery remains callable for recovery.
-Configuration outputs can contain secrets. HTTPS uses Go's normal certificate
-validation. Tests currently use mocked APIs; live version compatibility is pending.
+Configuration outputs can contain secrets; HTTP request and response bodies are
+not logged. HTTPS validates server certificates.
 
 ### Tool approvals
 
@@ -210,10 +185,9 @@ read_only = true
 
 The default is `false`. When enabled, the shared Kea client permits only exact
 command names classified as read in [ISC's API reference](https://kea.readthedocs.io/en/latest/api.html).
-The reviewed policy in [kea/access.go](kea/access.go) lists all 219 documented
-commands (89 read, 130 write), reviewed on 2026-10-13. Write commands and unknown
-commands, including custom hooks and future additions, are rejected before any
-HTTP request. This applies to raw commands, dedicated tools, and resources in
+Write commands and unknown commands, including custom hooks and future
+additions, are rejected before any HTTP request. This applies to raw commands,
+dedicated tools, and resources in
 both Control Agent and direct modes. Restart after changing the setting.
 
 `kea://api/commands` reports `read_only` and, when enabled, filters the live
