@@ -1,10 +1,16 @@
 package config
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/rannday/kea-mcp/kea"
 )
 
 func isolateConfigDiscovery(t *testing.T) {
@@ -116,7 +122,7 @@ func TestFileSettings(t *testing.T) {
 			if (err != nil) != tc.fail {
 				t.Fatalf("error=%v want failure=%v", err, tc.fail)
 			}
-			if err == nil && (cfg.APIMode != tc.mode || cfg.APIPassword != tc.password || cfg.APIUsername != "file" || cfg.APIURL != "https://kea.example") {
+			if err == nil && (cfg.APIMode != tc.mode || cfg.APIPassword != tc.password || cfg.APIUsername != "file" || cfg.APIURL != "https://kea.example/") {
 				t.Fatal("file configuration did not normalize or isolate settings")
 			}
 		})
@@ -130,6 +136,94 @@ func TestFileSettings(t *testing.T) {
 		writeConfig(t, path, body)
 		if _, err := Load(path); err == nil {
 			t.Fatal("invalid file accepted")
+		}
+	}
+}
+
+func TestEndpointURLPreservation(t *testing.T) {
+	for _, endpoint := range []string{
+		"https://kea.example/",
+		"https://kea.example/kea/",
+		"https://kea.example/kea/?target=/",
+		"https://kea.example/kea//",
+	} {
+		for _, tc := range []struct {
+			name, prefix, service string
+		}{
+			{"control agent", "[api]\n", ""},
+			{"direct shared", "[api]\nmode='direct'\nservice='dhcp4'\n", ""},
+			{"direct dhcp4", "[api]\nmode='direct'\n[api.endpoints.dhcp4]\n", "dhcp4"},
+			{"direct dhcp6", "[api]\nmode='direct'\n[api.endpoints.dhcp6]\n", "dhcp6"},
+			{"direct d2", "[api]\nmode='direct'\n[api.endpoints.d2]\n", "d2"},
+		} {
+			t.Run(tc.name+"/"+endpoint, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), ".kea-mcp.toml")
+				writeConfig(t, path, tc.prefix+"url='  "+endpoint+"  '\n")
+				cfg, err := Load(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := cfg.APIURL
+				if tc.service != "" {
+					got = cfg.APIEndpoints[tc.service].URL
+				}
+				if got != endpoint {
+					t.Fatalf("URL=%q want %q", got, endpoint)
+				}
+			})
+		}
+	}
+}
+
+func TestConfiguredProxyEndpoint(t *testing.T) {
+	var accepted atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/kea" {
+			http.Redirect(w, r, "/kea/", http.StatusTemporaryRedirect)
+			return
+		}
+		if r.URL.Path != "/kea/" || r.Method != http.MethodPost {
+			http.Error(w, "expected POST /kea/", http.StatusBadRequest)
+			return
+		}
+		accepted.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"result":0}]`))
+	}))
+	defer proxy.Close()
+	for _, tc := range []struct {
+		name, prefix, service string
+	}{
+		{"shared", "[api]\n", ""},
+		{"direct endpoint", "[api]\nmode='direct'\n[api.endpoints.dhcp4]\n", "dhcp4"},
+	} {
+		for _, suffix := range []string{"/kea/", "/kea"} {
+			t.Run(tc.name+suffix, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), ".kea-mcp.toml")
+				writeConfig(t, path, tc.prefix+"url=' "+proxy.URL+suffix+" '\n")
+				cfg, err := Load(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				endpoint := cfg.APIURL
+				var options []kea.HTTPOption
+				req := kea.CommandRequest{Command: "status-get"}
+				if tc.service != "" {
+					endpoint = cfg.APIEndpoints[tc.service].URL
+					options = append(options, kea.WithDirectService(kea.Service(tc.service)))
+					req.Service = []kea.Service{kea.Service(tc.service)}
+				}
+				before := accepted.Load()
+				var responses []kea.CommandResponse
+				err = kea.NewHTTPTransport(endpoint, options...).Call(context.Background(), req, &responses)
+				if suffix == "/kea/" {
+					if err != nil || len(responses) != 1 || accepted.Load() != before+1 {
+						t.Fatalf("configured path failed: responses=%v error=%v", responses, err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), "status=307") || accepted.Load() != before {
+					t.Fatalf("redirect was not rejected: %v", err)
+				}
+			})
 		}
 	}
 }

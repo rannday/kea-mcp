@@ -49,7 +49,7 @@ func TestAuthenticationAndEndpointConfiguration(t *testing.T) {
 			switch tc.name {
 			case "mixed auth":
 				want := map[string]Endpoint{
-					"dhcp4": {URL: "http://four.example", Auth: "basic", Username: "shared", Password: "shared-password"},
+					"dhcp4": {URL: "http://four.example/", Auth: "basic", Username: "shared", Password: "shared-password"},
 					"dhcp6": {URL: "http://six.example", Auth: "basic", Username: "six", Password: "local-password"},
 					"d2":    {URL: "http://ddns.example", Auth: "none"},
 				}

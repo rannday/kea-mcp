@@ -303,7 +303,7 @@ func validateURL(raw string) (string, error) {
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
 		return "", errors.New("invalid url: expected HTTP/HTTPS URL without embedded credentials")
 	}
-	return strings.TrimRight(endpoint, "/"), nil
+	return endpoint, nil
 }
 
 func normalize(cfg Config) (Config, error) {

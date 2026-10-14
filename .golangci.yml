@@ -11,6 +11,13 @@ run:
 linters:
   # Use golangci-lint's maintained default set for focused correctness checks.
   default: standard
+  enable:
+    - bodyclose
+    - noctx
+    - contextcheck
+    - errorlint
+    - nilnesserr
+    - durationcheck
 
   exclusions:
     # Preserve the vendor-directory exclusion.
