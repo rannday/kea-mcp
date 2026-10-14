@@ -1,0 +1,32 @@
+# Direct daemon APIs. Copy to .kea-mcp.toml in cwd, ~/.agents/, or ~/.codex/.
+[api]
+mode = "direct"
+
+# Restrict every tool/resource to reviewed read commands; unknown commands deny.
+read_only = false
+
+# Optional limits (defaults: 64 MiB and 5 seconds).
+# max_response_bytes = 67108864
+# read_timeout_sec = 5
+
+# No auth by default. For shared Basic auth, set username and one password source.
+# username = "YOUR_API_USERNAME"
+# password = "YOUR_API_PASSWORD"
+# password_env = "KEA_API_PASSWORD"
+# Password-file paths are relative to this TOML file, or absolute.
+# password_file = "credentials/kea-password.txt"
+
+# Endpoints inherit shared auth. Override with a complete local credential set,
+# or auth = "none". Remove tables for services you do not run.
+[api.endpoints.dhcp4]
+url = "http://127.0.0.1:8000"
+
+[api.endpoints.dhcp6]
+url = "http://127.0.0.1:8001"
+
+[api.endpoints.d2]
+url = "http://127.0.0.1:8002"
+
+[tools]
+# Broad command access needs an explicit opt-in and its own agent approval.
+raw_command = false

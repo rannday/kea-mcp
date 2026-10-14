@@ -28,8 +28,27 @@ type Config struct {
 	APIURL           string
 	APIUsername      string
 	APIPassword      string
+	APIAuth          string
+	APIEndpoints     map[string]Endpoint
 	MaxResponseBytes int64
 	ReadTimeoutSec   int64
+}
+
+// Endpoint is a direct daemon API with resolved authentication settings.
+type Endpoint struct {
+	URL      string
+	Auth     string
+	Username string
+	Password string
+}
+
+type fileEndpoint struct {
+	URL          string  `toml:"url"`
+	Auth         string  `toml:"auth"`
+	Username     *string `toml:"username"`
+	Password     *string `toml:"password"`
+	PasswordEnv  *string `toml:"password_env"`
+	PasswordFile *string `toml:"password_file"`
 }
 
 // ValidateReadTimeoutSec ensures seconds fit in a positive Go duration.
@@ -69,17 +88,19 @@ func Load(path string) (Config, error) {
 func loadFile(path string) (Config, error) {
 	var file struct {
 		API struct {
-			ReadOnly         bool     `toml:"read_only"`
-			Mode             string   `toml:"mode"`
-			Service          string   `toml:"service"`
-			Services         []string `toml:"services"`
-			URL              string   `toml:"url"`
-			Username         *string  `toml:"username"`
-			Password         *string  `toml:"password"`
-			PasswordEnv      *string  `toml:"password_env"`
-			PasswordFile     *string  `toml:"password_file"`
-			MaxResponseBytes *int64   `toml:"max_response_bytes"`
-			ReadTimeoutSec   *int64   `toml:"read_timeout_sec"`
+			ReadOnly         bool                    `toml:"read_only"`
+			Mode             string                  `toml:"mode"`
+			Service          string                  `toml:"service"`
+			Services         []string                `toml:"services"`
+			URL              string                  `toml:"url"`
+			Auth             string                  `toml:"auth"`
+			Endpoints        map[string]fileEndpoint `toml:"endpoints"`
+			Username         *string                 `toml:"username"`
+			Password         *string                 `toml:"password"`
+			PasswordEnv      *string                 `toml:"password_env"`
+			PasswordFile     *string                 `toml:"password_file"`
+			MaxResponseBytes *int64                  `toml:"max_response_bytes"`
+			ReadTimeoutSec   *int64                  `toml:"read_timeout_sec"`
 		} `toml:"api"`
 		Tools struct {
 			RawCommand bool `toml:"raw_command"`
@@ -101,8 +122,28 @@ func loadFile(path string) (Config, error) {
 		return Config{}, errors.New("invalid configuration tables: expected api and tools")
 	}
 	allowed := map[string][]string{
-		"api":   {"read_only", "mode", "service", "services", "url", "username", "password", "password_env", "password_file", "max_response_bytes", "read_timeout_sec"},
+		"api":   {"read_only", "mode", "service", "services", "url", "auth", "endpoints", "username", "password", "password_env", "password_file", "max_response_bytes", "read_timeout_sec"},
 		"tools": {"raw_command"},
+	}
+	if raw, exists := keys["api"]["endpoints"]; exists {
+		endpoints, ok := raw.(map[string]any)
+		if !ok || len(endpoints) == 0 {
+			return Config{}, errors.New("api.endpoints requires daemon endpoint tables")
+		}
+		for name, rawEndpoint := range endpoints {
+			if name != "dhcp4" && name != "dhcp6" && name != "d2" {
+				return Config{}, errors.New("api.endpoints supports only dhcp4, dhcp6, and d2")
+			}
+			fields, ok := rawEndpoint.(map[string]any)
+			if !ok {
+				return Config{}, errors.New("invalid api.endpoints table")
+			}
+			for key := range fields {
+				if !slices.Contains([]string{"url", "auth", "username", "password", "password_env", "password_file"}, key) {
+					return Config{}, errors.New("unknown endpoint key: use documented URL and authentication settings")
+				}
+			}
+		}
 	}
 	for table, fields := range keys {
 		names, ok := allowed[table]
@@ -130,8 +171,59 @@ func loadFile(path string) (Config, error) {
 			return Config{}, errors.New("api.max_response_bytes must be a positive integer below 9223372036854775807")
 		}
 	}
+	defaults, err := resolveCredentials(fileEndpoint{Auth: a.Auth, Username: a.Username, Password: a.Password, PasswordEnv: a.PasswordEnv, PasswordFile: a.PasswordFile}, path)
+	if err != nil {
+		return Config{}, fmt.Errorf("api: %w", err)
+	}
+	cfg := Config{ReadOnly: a.ReadOnly, RawCommand: file.Tools.RawCommand, APIMode: a.Mode, APIService: a.Service, APIServices: a.Services, APIURL: a.URL, APIAuth: defaults.Auth, APIUsername: defaults.Username, APIPassword: defaults.Password, MaxResponseBytes: maxResponseBytes, ReadTimeoutSec: readTimeoutSec}
+	if a.Endpoints != nil {
+		cfg.APIEndpoints = make(map[string]Endpoint, len(a.Endpoints))
+		for name, settings := range a.Endpoints {
+			endpoint := defaults
+			if settings.Auth != "" || hasCredentials(settings) {
+				endpoint, err = resolveCredentials(settings, path)
+				if err != nil {
+					return Config{}, fmt.Errorf("api.endpoints.%s: %w", name, err)
+				}
+			}
+			endpoint.URL, err = validateURL(settings.URL)
+			if err != nil {
+				return Config{}, fmt.Errorf("api.endpoints.%s: %w", name, err)
+			}
+			cfg.APIEndpoints[name] = endpoint
+		}
+	} else {
+		cfg.APIURL, err = validateURL(a.URL)
+		if err != nil {
+			return Config{}, fmt.Errorf("api: %w", err)
+		}
+	}
+	return normalize(cfg)
+}
+
+func hasCredentials(a fileEndpoint) bool {
+	return a.Username != nil || a.Password != nil || a.PasswordEnv != nil || a.PasswordFile != nil
+}
+
+func resolveCredentials(a fileEndpoint, path string) (Endpoint, error) {
+	auth := strings.ToLower(strings.TrimSpace(a.Auth))
+	if auth == "" {
+		auth = "none"
+		if hasCredentials(a) {
+			auth = "basic"
+		}
+	}
+	if auth == "none" {
+		if hasCredentials(a) {
+			return Endpoint{}, errors.New("auth=none cannot include credentials")
+		}
+		return Endpoint{Auth: "none"}, nil
+	}
+	if auth != "basic" {
+		return Endpoint{}, errors.New("auth must be basic or none")
+	}
 	if a.Username == nil {
-		return Config{}, errors.New("missing api.username")
+		return Endpoint{}, errors.New("missing username for Basic auth")
 	}
 	sources := 0
 	for _, source := range []*string{a.Password, a.PasswordEnv, a.PasswordFile} {
@@ -140,7 +232,7 @@ func loadFile(path string) (Config, error) {
 		}
 	}
 	if sources != 1 {
-		return Config{}, errors.New("set exactly one of api.password, api.password_env, or api.password_file")
+		return Endpoint{}, errors.New("set exactly one of password, password_env, or password_file for Basic auth")
 	}
 	password := ""
 	if a.Password != nil {
@@ -148,17 +240,17 @@ func loadFile(path string) (Config, error) {
 	} else if a.PasswordEnv != nil {
 		name := strings.TrimSpace(*a.PasswordEnv)
 		if !envReferenceNamePattern.MatchString(name) {
-			return Config{}, errors.New("invalid api.password_env: expected environment variable name")
+			return Endpoint{}, errors.New("invalid password_env: expected environment variable name")
 		}
 		var ok bool
 		password, ok = os.LookupEnv(name)
 		if !ok {
-			return Config{}, errors.New("api.password_env references an unset environment variable")
+			return Endpoint{}, errors.New("password_env references an unset environment variable")
 		}
 	} else {
 		passwordPath := *a.PasswordFile
 		if strings.TrimSpace(passwordPath) == "" {
-			return Config{}, errors.New("invalid api.password_file: expected a non-empty path")
+			return Endpoint{}, errors.New("invalid password_file: expected a non-empty path")
 		}
 		if !filepath.IsAbs(passwordPath) {
 			passwordPath = filepath.Join(filepath.Dir(path), passwordPath)
@@ -166,16 +258,25 @@ func loadFile(path string) (Config, error) {
 		data, err := os.ReadFile(passwordPath)
 		if err != nil {
 			// Do not expose file contents or paths in credential errors.
-			return Config{}, errors.New("cannot read api.password_file")
+			return Endpoint{}, errors.New("cannot read password_file")
 		}
 		password = string(data)
 	}
-	endpoint := strings.TrimSpace(a.URL)
+	username := strings.TrimSpace(*a.Username)
+	password = strings.TrimSpace(password)
+	if username == "" && password == "" {
+		return Endpoint{}, errors.New("Basic auth requires non-empty credentials")
+	}
+	return Endpoint{Auth: "basic", Username: username, Password: password}, nil
+}
+
+func validateURL(raw string) (string, error) {
+	endpoint := strings.TrimSpace(raw)
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
-		return Config{}, errors.New("invalid api.url: expected HTTP/HTTPS URL without embedded credentials")
+		return "", errors.New("invalid url: expected HTTP/HTTPS URL without embedded credentials")
 	}
-	return normalize(Config{ReadOnly: a.ReadOnly, RawCommand: file.Tools.RawCommand, APIMode: a.Mode, APIService: a.Service, APIServices: a.Services, APIURL: strings.TrimRight(endpoint, "/"), APIUsername: *a.Username, APIPassword: password, MaxResponseBytes: maxResponseBytes, ReadTimeoutSec: readTimeoutSec})
+	return strings.TrimRight(endpoint, "/"), nil
 }
 
 func normalize(cfg Config) (Config, error) {
@@ -189,7 +290,10 @@ func normalize(cfg Config) (Config, error) {
 	if cfg.APIMode != "control-agent" && cfg.APIMode != "direct" {
 		return Config{}, errors.New("invalid API mode: expected control-agent or direct")
 	}
-	if cfg.APIMode == "direct" && cfg.APIService != "dhcp4" && cfg.APIService != "dhcp6" && cfg.APIService != "d2" {
+	if cfg.APIEndpoints != nil && (cfg.APIMode != "direct" || cfg.APIService != "" || strings.TrimSpace(cfg.APIURL) != "" || len(cfg.APIEndpoints) == 0) {
+		return Config{}, errors.New("api.endpoints requires direct mode and cannot be combined with api.url or api.service")
+	}
+	if cfg.APIMode == "direct" && cfg.APIEndpoints == nil && cfg.APIService != "dhcp4" && cfg.APIService != "dhcp6" && cfg.APIService != "d2" {
 		return Config{}, errors.New("invalid API service: direct mode requires dhcp4, dhcp6, or d2")
 	}
 	if cfg.APIServices != nil {

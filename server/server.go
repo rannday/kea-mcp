@@ -50,10 +50,7 @@ type rawCommandInput struct {
 
 // New builds a STDIO-ready MCP server for a Kea API endpoint.
 func New(cfg config.Config) (*sdkmcp.Server, error) {
-	options := []kea.HTTPOption{kea.WithAuth(&kea.BasicAuth{
-		Username: cfg.APIUsername,
-		Password: cfg.APIPassword,
-	})}
+	options := []kea.HTTPOption{}
 	if cfg.ReadTimeoutSec != 0 {
 		if err := config.ValidateReadTimeoutSec(cfg.ReadTimeoutSec); err != nil {
 			return nil, err
@@ -64,8 +61,12 @@ func New(cfg config.Config) (*sdkmcp.Server, error) {
 		options = append(options, kea.WithMaxResponseBytes(cfg.MaxResponseBytes))
 	}
 	services := controlAgentServices
+	var transport kea.Transport
 	switch cfg.APIMode {
 	case "", "control-agent":
+		if cfg.APIEndpoints != nil {
+			return nil, fmt.Errorf("api.endpoints requires direct mode")
+		}
 		if cfg.APIServices != nil {
 			if len(cfg.APIServices) == 0 {
 				return nil, fmt.Errorf("api.services must not be empty")
@@ -83,6 +84,34 @@ func New(cfg config.Config) (*sdkmcp.Server, error) {
 		if cfg.APIServices != nil {
 			return nil, fmt.Errorf("api.services is only supported in control-agent mode")
 		}
+		if cfg.APIEndpoints != nil {
+			if len(cfg.APIEndpoints) == 0 || cfg.APIURL != "" || cfg.APIService != "" {
+				return nil, fmt.Errorf("api.endpoints cannot be empty or combined with api.url or api.service")
+			}
+			for name := range cfg.APIEndpoints {
+				if name != "dhcp4" && name != "dhcp6" && name != "d2" {
+					return nil, fmt.Errorf("api.endpoints supports only dhcp4, dhcp6, and d2")
+				}
+			}
+			services = nil
+			routes := make(serviceTransport)
+			for _, service := range []kea.Service{kea.Services.DHCP4, kea.Services.DHCP6, kea.Services.DDNS} {
+				endpoint, exists := cfg.APIEndpoints[string(service)]
+				if !exists {
+					continue
+				}
+				routeOptions := append([]kea.HTTPOption(nil), options...)
+				routeOptions = append(routeOptions, kea.WithDirectService(service))
+				route, err := endpointTransport(endpoint, routeOptions)
+				if err != nil {
+					return nil, fmt.Errorf("api.endpoints.%s: %w", service, err)
+				}
+				routes[service] = route
+				services = append(services, service)
+			}
+			transport = routes
+			break
+		}
 		service, err := kea.ParseService(cfg.APIService)
 		if err != nil || service == kea.Services.Agent {
 			return nil, fmt.Errorf("direct mode requires dhcp4, dhcp6, or d2")
@@ -92,8 +121,15 @@ func New(cfg config.Config) (*sdkmcp.Server, error) {
 	default:
 		return nil, fmt.Errorf("unsupported API mode %q", cfg.APIMode)
 	}
+	if transport == nil {
+		var err error
+		transport, err = endpointTransport(config.Endpoint{URL: cfg.APIURL, Auth: cfg.APIAuth, Username: cfg.APIUsername, Password: cfg.APIPassword}, options)
+		if err != nil {
+			return nil, err
+		}
+	}
 	srv := &Server{
-		kea:          kea.NewClient(kea.NewHTTPTransport(cfg.APIURL, options...), kea.WithReadOnly(cfg.ReadOnly)),
+		kea:          kea.NewClient(transport, kea.WithReadOnly(cfg.ReadOnly)),
 		services:     services,
 		readOnly:     cfg.ReadOnly,
 		commandTools: make(map[string]bool),
