@@ -5,8 +5,8 @@
 This is a Go STDIO MCP server for the ISC Kea API.
 
 Read `.agents/skills/kea-mcp/SKILL.md` when changing Kea commands, transports,
-configuration, MCP tools, resources, tests, or API documentation. That skill owns
-the repository's Kea contracts and validation requirements.
+configuration, MCP tools, resources, plugin packaging, tests, or documentation.
+That skill owns the repository's Kea contracts and validation requirements.
 
 ## Layout
 
@@ -16,12 +16,15 @@ the repository's Kea contracts and validation requirements.
 - `server`: endpoint routing, MCP tool/resource registration, and handlers.
 - `.kea-mcp.direct.example.toml` and `.kea-mcp.control-agent.example.toml`:
   explicit mode examples; direct uses separate DHCP4, DHCP6, and D2 endpoints.
+- `plugins/kea-mcp`: plugin metadata and local STDIO launch manifest.
+- `.agents/plugins/marketplace.json`: repository marketplace catalog.
+- `docs/deployment.md`: operator installation, acceptance, and recovery guidance.
 
 ## Documentation
 
-README.md is for installing, configuring, and using the server. Keep both TOML
-examples and README settings synchronized with configuration, including shared
+README.md is for installing, configuring, and using the server. Deployment docs
+are for operators; keep lab history, planned deployments, and CI implementation
+details out of end-user documentation. Keep both TOML examples and README
+settings synchronized with configuration, including shared
 and per-service authentication and client versus server timeouts. Keep
 contributor and agent procedures in the project skill rather than the README.
-The local `.kea-mcp.toml` may contain credentials; do not copy its contents into
-documentation or fixtures.

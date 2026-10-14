@@ -20,14 +20,50 @@ go install github.com/rannday/kea-mcp@latest
 ```
 
 Add `GOBIN` (or `GOPATH/bin` when `GOBIN` is unset) to your `PATH`, then use
-`kea-mcp` as the command in your MCP client configuration. This installation
-path requires a published version containing the root executable.
+`kea-mcp` as the command in your MCP client configuration.
 
 To run from a source checkout:
 
 ```sh
 go run . --config /absolute/path/to/.kea-mcp.toml
 ```
+
+### Codex plugin marketplace
+
+This repository includes a local STDIO plugin and a GitHub-backed marketplace
+catalog. The plugin launches `kea-mcp` from `PATH`; it does not download or
+bundle the executable. Install the binary as described above and ensure the
+Codex or ChatGPT desktop process can find it. On Windows, the executable is
+`kea-mcp.exe`. Restart the client after changing `PATH`.
+
+Before enabling the plugin, create `~/.agents/.kea-mcp.toml` or
+`~/.codex/.kea-mcp.toml` using one of the [configuration examples](#configuration).
+Set `[api] read_only = true` for read-only access. Keep credentials and
+certificate paths in your own configuration, outside the plugin package.
+
+Add the marketplace and install the plugin with the Codex CLI:
+
+```sh
+codex plugin marketplace add rannday/kea-mcp
+codex plugin add kea-mcp@kea-mcp
+```
+
+Alternatively, after adding the marketplace, open the Plugins Directory in the
+ChatGPT desktop app and install **Kea MCP** from the **Kea MCP** marketplace.
+Ensure the plugin is enabled, then start a new local conversation and ask it to
+discover commands and check service status and versions.
+See [OpenAI's marketplace guide](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli).
+
+The plugin starts in its installed package directory and supplies no command
+arguments, so it discovers your home configuration rather than a project's
+working-directory TOML. The first home configuration wins: `~/.agents/` before
+`~/.codex/`. Restart the plugin after changing configuration. If you already
+configured a standalone `[mcp_servers.kea]`, disable that entry when enabling
+the plugin to avoid running two instances.
+
+This repository marketplace is separate from OpenAI's public plugin directory.
+The plugin runs locally; it does not expose a hosted MCP endpoint for web or
+mobile use.
 
 ## API modes
 
@@ -205,7 +241,6 @@ MCP servers. Add this to your Codex `config.toml`:
 [mcp_servers.kea]
 default_tools_approval_mode = "prompt"
 command = "/absolute/path/to/kea-mcp"
-args = ["--config", "/absolute/path/to/kea-production.toml", "--read-timeout-sec", "90"]
 startup_timeout_sec = 90
 tool_timeout_sec = 420
 
@@ -215,14 +250,18 @@ kea_status_get = { approval_mode = "approve" }
 ```
 
 Use `kea-mcp.exe` on Windows and TOML literal strings or forward slashes for
-Windows paths. For discovery instead, omit `args` and set
-`cwd = "/absolute/path/to/project"`. The agent configuration launches the
-process; the separate Kea TOML supplies endpoints, authentication, and TLS settings.
+Windows paths. This example uses automatic configuration discovery; use a home
+configuration for consistent settings across projects. To select a project
+configuration, set `cwd = "/absolute/path/to/project"`. To select any other file,
+add `args = ["--config", "/absolute/path/to/kea-production.toml"]`.
+The client configuration launches the process; the separate Kea TOML supplies
+endpoints, authentication, and TLS settings.
 Per-tool approval entries use this server's `kea_` tool names. These options
 are documented in the [Codex MCP documentation](https://developers.openai.com/codex/mcp/).
 
 `startup_timeout_sec` and `tool_timeout_sec` are Codex client settings, not
-Kea server TOML settings. Pass the server's timeout through `args` as shown;
+Kea server TOML settings. Set `[api] read_timeout_sec` in your Kea TOML, or add
+`--read-timeout-sec N` to `args` to override it;
 adding a custom `read_timeout_sec` key beneath `[mcp_servers.kea]` does not
 configure this process. Allow time for multiple requests per tool: discovery
 can query four services sequentially, and commands probe availability before

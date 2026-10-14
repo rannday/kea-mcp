@@ -1,66 +1,38 @@
 # Deployment and operations
 
-## Validation status
-
-The operator has tested direct API access against the latest DHCP4, DHCP6, and
-D2 images in the sibling `kea-simple` Docker setup. Record the exact image
-digests and `version-get` results with each deployment: `latest` is a moving
-label. CI runs Go checks on Windows, Linux, and macOS, plus real Docker integration
-tests on Linux and macOS against current direct daemons and Kea 2.6.1 through its
-Control Agent. Both modes cover plain HTTP, Basic authentication, TLS, and mutual
-TLS with representative configurations. Windows Docker integration has also been
-tested locally.
-
-Large configuration and lease-volume testing is deferred. The planned cable
-plant validation target runs Kea 2.6.1. Treat that version and its installed hooks
-as a separate acceptance target; use Control Agent mode for that deployment.
-The current lab evidence does not establish its compatibility or capacity.
-
 ## Obtain and verify a build
 
-CI builds deployment archives only after the Windows/Linux/macOS checks,
-vulnerability check, and real Docker integration tests pass. It uses the `buildx`
-module pinned in `go.mod` through
-`go tool buildx`. Targets are Windows amd64, Linux amd64/arm64, and macOS
-amd64/arm64. Cross-compilation does not establish runtime compatibility on every
-target; CI smoke-tests the packaged Linux amd64 executable.
+Release archives are available for Windows amd64, Linux amd64/arm64, and macOS
+amd64/arm64. Select the archive matching your operating system and architecture.
 
 Download the platform archive and `checksums.txt` from
 [GitHub Releases](https://github.com/rannday/kea-mcp/releases). For example, the
-Windows release archive is `kea-mcp-v0.1.0-windows-amd64.zip`. Tags named
-`vMAJOR.MINOR.PATCH` publish versioned archives after the full CI suite passes.
+Windows release archive is `kea-mcp-v0.1.0-windows-amd64.zip`.
 
 For development snapshots, download `kea-mcp-snapshot-<commit>` from the successful
-Actions run's artifacts.
-Confirm the source commit and check results before selecting an artifact,
-especially for pull requests. Unpack the outer artifact download to obtain the
-platform archives and `checksums.txt`. The SHA-256 entries cover the platform
-archives, not the outer download. On Linux:
+Actions run's artifacts. Unpack the outer download to obtain the platform
+archives and `checksums.txt`. The SHA-256 entries cover the platform archives,
+not the outer download. To verify a selected archive on Linux:
 
 ```sh
-sha256sum --check checksums.txt
-tar -xzf kea-mcp-snapshot-<commit>-linux-amd64.tar.gz
+sha256sum kea-mcp-v0.1.0-linux-amd64.tar.gz
+# Compare with checksums.txt before extracting or running the executable.
+tar -xzf kea-mcp-v0.1.0-linux-amd64.tar.gz
 ./kea-mcp --help
 ```
 
+Compare the hash with the matching entry in `checksums.txt`. Replace the example
+version and platform with the archive you downloaded.
 On Windows, compare the selected archive's `Get-FileHash -Algorithm SHA256`
 result with its entry in `checksums.txt`, then extract the ZIP. Checksums detect
 corruption; obtain them and the archives from the intended release or Actions run.
-Actions artifacts expire after 30 days; retain an approved build and its manifest in
-your deployment storage. Each platform archive contains only the executable.
+Retain the selected build and its checksum manifest in your deployment storage.
+Each platform archive contains only the executable.
 Keep configuration and credentials separately.
 
-To reproduce an archive set from a clean checkout with the required Go toolchain:
-
-```sh
-go tool buildx -v v0.1.0 --name kea-mcp --main . --out dist --version-var github.com/rannday/kea-mcp/server.version
-```
-
-Check out the matching release tag first and replace `v0.1.0` with its version.
-The output directory must be empty. For a development build, use
-`snapshot-<commit>` with the checked-out full commit hash. The MCP handshake reports
-the version embedded by buildx; source builds report `dev`. Record the release or
-snapshot version, source commit, and checksum for support and rollback.
+The MCP handshake reports the packaged version; source builds report `dev`.
+Record the release or snapshot version, source commit, and checksum for support
+and rollback.
 
 ## Configure and launch
 
@@ -73,8 +45,9 @@ snapshot version, source commit, and checksum for support and rollback.
    required, mutual TLS. Restrict access to configuration, password files, and
    client keys to the account launching the MCP process.
 5. Configure the MCP client with an absolute executable path and
-   `--config /absolute/path/to/kea-production.toml`. Set client timeouts to allow
-   the server's sequential discovery and availability checks. Keep per-tool
+   an explicit `--config` path, or use home TOML discovery. For the Codex plugin,
+   put the executable on the client's PATH and use home discovery. Set client
+   timeouts to allow sequential discovery and availability checks. Keep per-tool
    approvals appropriate to the data or operations each tool exposes.
 
 This is a STDIO process launched by the MCP client. It does not require a public
@@ -95,9 +68,9 @@ discovery leaves the catalog unchanged, and the client can stop/restart the proc
 For writable deployments, first test the intended commands and recovery procedure
 in an isolated lab. Enabling writes requires a separate operator decision and
 appropriate client approvals. API checks do not prove DHCP allocation, DNS
-updates, or cable-plant capacity. Before deploying to Kea 2.6.1, repeat these
-checks against that version and the required hooks and measure representative
-configuration/lease responses, latency, and memory use.
+updates, or capacity under load. Repeat these checks against your deployed Kea
+version and required hooks, and measure representative configuration/lease
+responses, latency, and memory use.
 
 ## Upgrade, rotate, and recover
 
@@ -123,7 +96,3 @@ retrying. Transport failure does not prove the write failed. A Kea result `5`
 means partial application and failed rollback; reconcile the running state with
 the approved configuration. `config-set` changes running state; `config-write`
 persists it. Recover using the deployment's approved Kea backup procedure.
-
-CI also runs weekly to detect newly disclosed vulnerabilities in unchanged
-dependencies. Review security failures and dependency update PRs before approving
-another deployment.

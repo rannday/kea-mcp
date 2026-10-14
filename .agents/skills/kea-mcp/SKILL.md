@@ -1,6 +1,6 @@
 ---
 name: kea-mcp
-description: Maintain this repository's Kea API contracts, HTTP transports, authentication, TOML configuration, MCP tools and resources, and related tests or documentation.
+description: Maintain this repository's Kea API contracts, HTTP transports, authentication, TOML configuration, MCP tools and resources, plugin packaging, and related tests or documentation.
 ---
 
 # Kea MCP development
@@ -51,8 +51,7 @@ hostname and expiration checks, and reject TLS settings on HTTP. Never add a
 verification bypass. Keep endpoint TLS transports isolated and preserve request
 timeouts, redirect rejection, and caller-owned clients. Test with synthetic
 certificates (public pre-generated integration fixtures or generated unit-test
-identities), including mTLS and failed handshakes; do not inspect real
-certificate or private-key files.
+identities), including mTLS and failed handshakes.
 
 api.read_timeout_sec defaults to five seconds and bounds the entire HTTP request.
 --read-timeout-sec overrides the TOML value. api.max_response_bytes defaults to
@@ -113,8 +112,7 @@ results alongside per-service errors, and honor optional Control Agent api.servi
 ## Handle operational intent
 
 Raw commands include configuration changes, lease mutations, and shutdown;
-describe their capabilities accurately. Live Kea mutations require explicit
-operator authorization. `config-test` does not guarantee
+describe their capabilities accurately. `config-test` does not guarantee
 `config-set` success; `config-set` changes running state, while `config-write`
 persists it. Avoid retries without establishing a mutation's outcome.
 
@@ -125,8 +123,30 @@ before network access. Cover both modes and invalid targets. Test MCP
 discovery/handlers when changing exposed APIs.
 Keep local tests focused on Kea behavior, configuration discovery and precedence,
 credential rules, secret-safe errors, and integration with the libraries.
-For Go changes, run `go test ./...` and `go vet ./...` in addition to the global
-Go workflow. State whether Kea validation used mocks or a live deployment.
+State whether Kea validation used mocks or a live deployment.
+
+## Plugin package
+
+`plugins/kea-mcp/plugin.json` describes the plugin; `mcp.json` launches the
+preinstalled `kea-mcp` executable from PATH with no arguments. Its working
+directory is `${PLUGIN_ROOT}`, so home TOML discovery is independent of the
+user's project. Keep endpoint, credential, and certificate configuration outside
+the package. Do not bundle or download executables as part of plugin installation.
+The repository marketplace catalog points to `./plugins/kea-mcp`.
+
+Keep package name, marketplace identity, release version, repository URLs, and
+README installation commands consistent. Plugin packaging alone does not require
+a Go version bump or binary rebuild. Distinguish this repository marketplace from
+OpenAI's public directory and the local STDIO transport from a hosted MCP endpoint.
+
+Validate plugin and MCP manifests against their declared schemas. In a temporary
+Codex profile, add the checkout as a local marketplace, list available plugins,
+and install `kea-mcp@kea-mcp`. Launch the installed MCP manifest with a test PATH
+containing the executable; verify initialization and tools/list without mutating
+the user's plugin installation. This proves packaging and startup, not live Kea
+connectivity. Keep checkout-only testing instructions here, outside the README.
+
+## Live connection checks
 
 For an authorized live connection check, use the operator's selected configuration
 and confirm its mode rather than inferring it from an example filename. Avoid

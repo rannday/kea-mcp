@@ -1,0 +1,28 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "kea-mcp",
+  "version": "0.1.0",
+  "description": "Inspect and manage ISC Kea through direct daemon APIs or the legacy Control Agent using a locally installed MCP server.",
+  "author": {
+    "name": "rannday",
+    "url": "https://github.com/rannday"
+  },
+  "homepage": "https://github.com/rannday/kea-mcp",
+  "repository": "https://github.com/rannday/kea-mcp",
+  "license": "WTFPL",
+  "keywords": ["kea", "dhcp", "dns", "mcp"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Kea MCP",
+        "shortDescription": "Inspect and manage ISC Kea",
+        "longDescription": "Connect a local kea-mcp binary to your Kea APIs. Supports direct daemon and Control Agent deployments, TLS, Basic authentication, and configurable read-only access. Install the binary on PATH and configure your own Kea endpoints before use.",
+        "developerName": "rannday",
+        "category": "Developer tools",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://github.com/rannday/kea-mcp",
+        "defaultPrompt": "Discover the available Kea commands and check the status and version of each configured service."
+      }
+    }
+  }
+}

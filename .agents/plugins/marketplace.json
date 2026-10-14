@@ -1,0 +1,20 @@
+{
+  "name": "kea-mcp",
+  "interface": {
+    "displayName": "Kea MCP"
+  },
+  "plugins": [
+    {
+      "name": "kea-mcp",
+      "source": {
+        "source": "local",
+        "path": "./plugins/kea-mcp"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer tools"
+    }
+  ]
+}
