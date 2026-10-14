@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -32,13 +31,11 @@ func (s *Server) discoverTool(ctx context.Context, _ *sdkmcp.CallToolRequest, _ 
 	return nil, payload, nil
 }
 
-// discover publishes the union of reviewed commands available on configured
-// services. A failed probe removes that service's capabilities until recovery.
+// discover reports live availability without changing the startup tool catalog.
 func (s *Server) discover(ctx context.Context) (map[string]any, error) {
 	s.discoveryMu.Lock()
 	defer s.discoveryMu.Unlock()
 	services := make([]map[string]any, 0, len(s.services))
-	available := make(map[string]bool)
 	for _, service := range s.services {
 		entry := map[string]any{"service": service.Name()}
 		commands, err := kea.ListCommands(ctx, s.kea, service)
@@ -50,7 +47,6 @@ func (s *Server) discover(ctx context.Context) (map[string]any, error) {
 			tools := make(map[string]string)
 			for _, command := range commands {
 				if kea.IsKnownCommand(command) {
-					available[command] = true
 					tools[command] = commandToolName(command)
 				}
 			}
@@ -58,32 +54,26 @@ func (s *Server) discover(ctx context.Context) (map[string]any, error) {
 		}
 		services = append(services, entry)
 	}
-	// A cancelled refresh must not publish an incomplete tool inventory.
+	// A cancelled refresh must not return an incomplete availability report.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	for command := range s.commandTools {
-		if !available[command] {
-			s.mcp.RemoveTools(commandToolName(command))
-			delete(s.commandTools, command)
-		}
-	}
-	commands := make([]string, 0, len(available))
-	for command := range available {
-		commands = append(commands, command)
-	}
-	sort.Strings(commands)
-	for _, command := range commands {
-		if s.commandTools[command] {
-			continue
-		}
+	return map[string]any{
+		"read_only": s.readOnly,
+		"doc_path":  "https://kea.readthedocs.io/en/latest/api.html#list-commands",
+		"services":  services,
+	}, nil
+}
+
+func (s *Server) registerCommandTools() {
+	for _, command := range s.allowedCommands(kea.KnownCommands()) {
 		access := "May change Kea state; obtain approval before use."
 		if kea.IsReadOnlyCommand(command) {
 			access = "Read command; returned data may be sensitive."
 		}
 		sdkmcp.AddTool(s.mcp, &sdkmcp.Tool{
 			Name:        commandToolName(command),
-			Description: fmt.Sprintf("Run Kea %s against one configured service. %s Use arguments from the deployed version's API documentation: https://kea.readthedocs.io/en/latest/api.html#%s", command, access, command),
+			Description: fmt.Sprintf("Run Kea %s against one configured service. Availability depends on the deployed version and hooks; run kea_discover first. %s Use arguments from the deployed version's API documentation: https://kea.readthedocs.io/en/latest/api.html#%s", command, access, command),
 			Annotations: &sdkmcp.ToolAnnotations{ReadOnlyHint: kea.IsReadOnlyCommand(command)},
 		}, func(ctx context.Context, req *sdkmcp.CallToolRequest, input commandInput) (*sdkmcp.CallToolResult, any, error) {
 			arguments, err := originalArguments(req)
@@ -92,11 +82,5 @@ func (s *Server) discover(ctx context.Context) (map[string]any, error) {
 			}
 			return s.commandTool(ctx, input.Service, command, arguments)
 		})
-		s.commandTools[command] = true
 	}
-	return map[string]any{
-		"read_only": s.readOnly,
-		"doc_path":  "https://kea.readthedocs.io/en/latest/api.html#list-commands",
-		"services":  services,
-	}, nil
 }

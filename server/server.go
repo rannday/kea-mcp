@@ -29,12 +29,11 @@ var controlAgentServices = []kea.Service{
 
 // Server wires the Kea client stack into an MCP server.
 type Server struct {
-	kea          *kea.Client
-	services     []kea.Service
-	readOnly     bool
-	mcp          *sdkmcp.Server
-	discoveryMu  sync.Mutex
-	commandTools map[string]bool
+	kea         *kea.Client
+	services    []kea.Service
+	readOnly    bool
+	mcp         *sdkmcp.Server
+	discoveryMu sync.Mutex
 }
 
 type commandInput struct {
@@ -129,12 +128,11 @@ func New(cfg config.Config) (*sdkmcp.Server, error) {
 		}
 	}
 	srv := &Server{
-		kea:          kea.NewClient(transport, kea.WithReadOnly(cfg.ReadOnly)),
-		services:     services,
-		readOnly:     cfg.ReadOnly,
-		commandTools: make(map[string]bool),
+		kea:      kea.NewClient(transport, kea.WithReadOnly(cfg.ReadOnly)),
+		services: services,
+		readOnly: cfg.ReadOnly,
 	}
-	instructions := "Run kea_discover first to register command-specific tools against configured Kea services, and again after daemon or hook changes. Write tools can modify configuration, leases, and service state."
+	instructions := "Run kea_discover first to check command availability on configured Kea services, and again after daemon or hook changes. Write tools can modify configuration, leases, and service state."
 	if cfg.ReadOnly {
 		instructions += " Read-only mode is enabled: write and unknown commands are rejected."
 	}
@@ -144,14 +142,19 @@ func New(cfg config.Config) (*sdkmcp.Server, error) {
 		Version: version,
 	}, &sdkmcp.ServerOptions{
 		Instructions: instructions,
+		Capabilities: &sdkmcp.ServerCapabilities{
+			Tools:   &sdkmcp.ToolCapabilities{}, // The catalog is fixed at startup.
+			Logging: &sdkmcp.LoggingCapabilities{},
+		},
 	})
 
 	srv.mcp = mcpServer
 	sdkmcp.AddTool(mcpServer, &sdkmcp.Tool{
 		Name:        "kea_discover",
-		Description: "Refresh live command availability and command-specific tools. Reports unavailable services without discarding successful results. Only sends read commands.",
+		Description: "Report live command availability and matching tools without changing the tool catalog. Reports unavailable services without discarding successful results. Only sends read commands.",
 		Annotations: &sdkmcp.ToolAnnotations{ReadOnlyHint: true},
 	}, srv.discoverTool)
+	srv.registerCommandTools()
 	if cfg.RawCommand {
 		sdkmcp.AddTool(mcpServer, &sdkmcp.Tool{
 			Name:        "kea_raw_command",
@@ -236,7 +239,7 @@ func (s *Server) commandTool(ctx context.Context, rawService, command string, ar
 		return toolError(err), nil, nil
 	}
 	if !slices.Contains(commands, command) {
-		return toolError(fmt.Errorf("command %q is unavailable on service %q; run kea_discover to refresh tools", command, service.Name())), nil, nil
+		return toolError(fmt.Errorf("command %q is unavailable on service %q; run kea_discover to refresh availability", command, service.Name())), nil, nil
 	}
 
 	responses, err := kea.CallCommandWithArguments(ctx, s.kea, command, arguments, service)

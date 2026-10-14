@@ -8,6 +8,11 @@ Configuration uses TOML.
 
 ## Installation
 
+For deployment snapshots, download the archives and checksum manifest from a
+successful CI run. See [Deployment and operations](docs/deployment.md) for
+installation, verification, upgrades, and recovery. Snapshots are identified by
+commit; tagged releases will follow once production validation is complete.
+
 Install with Go 1.27.2 or newer:
 
 ```sh
@@ -242,7 +247,7 @@ Clients using JSON configuration can use:
   `lease4-get` becomes `kea_lease4_get`, and `config-set` becomes `kea_config_set`.
   Each accepts `service` and optional JSON `arguments`; objects, arrays, and
   scalars are forwarded unchanged. Consult the deployed version's argument schema.
-- `kea_discover`: refresh command availability and the tool inventory.
+- `kea_discover`: report live command availability and matching tools.
 - `kea_raw_command`: disabled by default. Enable with `[tools] raw_command = true`
   for arbitrary commands, including custom hooks, subject to read-only policy.
 - `kea://api/commands`: refresh discovery and report command-to-tool mappings.
@@ -253,10 +258,11 @@ Read live configuration through `kea_config_get` so the client's tool approval
 rules apply. Configuration is not exposed as an MCP resource.
 
 Run `kea_discover` first (or read `kea://api/commands`) to probe `list-commands`
-and register dedicated tools. Startup exposes discovery and the optional raw
-tool immediately, even when Kea is unavailable. Dedicated tools expose
-only commands present in both the live inventory and the reviewed access policy;
-read-only mode also hides write tools. Unknown live commands appear in discovery
+and check which commands each service supports. Startup exposes all reviewed
+command tools, discovery, and the optional raw tool without contacting Kea,
+even when Kea is unavailable. Read-only mode hides write tools.
+The tool catalog stays fixed for the lifetime of the process; a listed tool does
+not imply that a particular daemon supports its command. Unknown live commands appear in discovery
 when read-only mode is off, but require an opted-in raw tool to execute.
 Commands depend on version, daemon, and loaded hooks; the
 [latest API reference](https://kea.readthedocs.io/en/latest/api.html) may describe
@@ -272,9 +278,9 @@ the previous configuration was not restored. A dispatched write without a
 definitive reply (timeout, connection failure, malformed or oversized response)
 reports `outcome_unknown = true`. Reconcile Kea state before retrying it.
 
-Run `kea_discover` after daemon or hook changes. Refresh adds/removes tools and
-sends MCP tool-list change notifications; the agent client must support refreshing
-its inventory. Failed services produce error entries alongside successful results.
+Run `kea_discover` after daemon or hook changes to refresh live availability.
+Discovery leaves the tool catalog unchanged, so clients can use the tools listed
+at initialization without handling tool-list change notifications. Failed services produce error entries alongside successful results.
 If every service is unavailable, discovery remains callable for recovery.
 Configuration outputs can contain secrets; HTTP request and response bodies are
 not logged. HTTPS validates server certificates. HTTP redirects are rejected.

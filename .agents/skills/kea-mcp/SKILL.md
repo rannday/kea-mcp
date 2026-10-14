@@ -100,10 +100,13 @@ Arguments vary by command. Preserve object, array, and scalar JSON arguments;
 Kea validates the deployed command's schema. Dedicated tools bind a single
 command and use stable kea_ names with hyphens replaced by underscores. Preserve
 existing tool names and resource URIs unless an interface change is requested.
-Expose only reviewed commands discovered live; hide write tools in read-only mode.
+Register all reviewed command tools at startup without contacting Kea; hide write
+tools in read-only mode. Keep the catalog fixed for the process lifetime. Discovery
+reports live per-service availability and matching tools, without adding/removing
+tools or requiring clients to refresh their catalog.
 Raw access requires [tools] raw_command=true and cannot bypass read-only policy.
 Recheck availability on the selected service before execution. Refresh discovery
-and tools through kea_discover or the commands resource. Preserve successful
+through kea_discover or the commands resource. Preserve successful
 results alongside per-service errors, and honor optional Control Agent api.services.
 
 ## Handle operational intent

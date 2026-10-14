@@ -74,27 +74,19 @@ func TestPartialDeploymentAndToolRefresh(t *testing.T) {
 	}
 	cs := connectTestClient(t, srv)
 	ctx := context.Background()
-	discoverTestTools(t, cs)
-	assertTools := func(want ...string) {
+	initial, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTools := func() {
 		t.Helper()
 		result, err := cs.ListTools(ctx, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := make(map[string]bool)
-		for _, tool := range result.Tools {
-			got[tool.Name] = true
-		}
-		if len(got) != len(want) {
-			t.Fatalf("tools = %v, want %v", got, want)
-		}
-		for _, name := range want {
-			if !got[name] {
-				t.Fatalf("missing %s: %v", name, got)
-			}
+		if err != nil || !reflect.DeepEqual(result.Tools, initial.Tools) {
+			t.Fatalf("catalog changed: %v %v", result, err)
 		}
 	}
-	assertTools("kea_discover", "kea_status_get", "kea_config_set")
+	discoverTestTools(t, cs)
+	assertTools()
 	// Partial failures preserve successful resource responses.
 	for _, uri := range []string{"kea://api/commands", "kea://api/examples/status-get"} {
 		resource, err := cs.ReadResource(ctx, &sdkmcp.ReadResourceParams{URI: uri})
@@ -150,16 +142,24 @@ func TestPartialDeploymentAndToolRefresh(t *testing.T) {
 	}
 	commands = []string{"config-get"}
 	mu.Unlock()
-	// Recheck availability even before a stale tool is removed by refresh.
+	// Recheck availability before dispatch even when the tool remains registered.
+	mu.Lock()
+	before = len(requests)
+	mu.Unlock()
 	result, err := cs.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kea_status_get", Arguments: map[string]any{"service": "dhcp4"}})
 	if err != nil || !result.IsError {
 		t.Fatalf("stale command succeeded: %v %v", result, err)
 	}
+	mu.Lock()
+	if len(requests) != before+1 || requests[len(requests)-1]["command"] != "list-commands" {
+		t.Error("unavailable command reached dispatch")
+	}
+	mu.Unlock()
 	result, err = cs.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kea_discover", Arguments: map[string]any{}})
 	if err != nil || result.IsError {
 		t.Fatalf("refresh: %v %v", result, err)
 	}
-	assertTools("kea_discover", "kea_config_get")
+	assertTools()
 	mu.Lock()
 	commands = []string{}
 	mu.Unlock()
@@ -167,7 +167,7 @@ func TestPartialDeploymentAndToolRefresh(t *testing.T) {
 	if err != nil || result.IsError {
 		t.Fatalf("empty refresh: %v %v", result, err)
 	}
-	assertTools("kea_discover")
+	assertTools()
 }
 
 func TestDiscoveryRecoveryFromUnavailableEndpoint(t *testing.T) {
@@ -190,7 +190,7 @@ func TestDiscoveryRecoveryFromUnavailableEndpoint(t *testing.T) {
 	cs := connectTestClient(t, srv)
 	ctx := context.Background()
 	tools, err := cs.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "kea_discover" {
+	if err != nil || len(tools.Tools) != len(kea.KnownCommands())+1 {
 		t.Fatalf("offline inventory: %v %v", tools, err)
 	}
 	mu.Lock()
@@ -201,7 +201,7 @@ func TestDiscoveryRecoveryFromUnavailableEndpoint(t *testing.T) {
 		t.Fatalf("recovery: %v %v", result, err)
 	}
 	tools, err = cs.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 2 {
+	if err != nil || len(tools.Tools) != len(kea.KnownCommands())+1 {
 		t.Fatalf("recovered inventory: %v %v", tools, err)
 	}
 }
@@ -217,9 +217,8 @@ func TestConcurrentDiscoverySerializesRefreshes(t *testing.T) {
 	releaseFirst := make(chan struct{})
 	var calls atomic.Int32
 	s := &Server{
-		services:     []kea.Service{kea.Services.DHCP4},
-		mcp:          sdkmcp.NewServer(&sdkmcp.Implementation{Name: "test", Version: "1"}, nil),
-		commandTools: make(map[string]bool),
+		services: []kea.Service{kea.Services.DHCP4},
+		mcp:      sdkmcp.NewServer(&sdkmcp.Implementation{Name: "test", Version: "1"}, nil),
 	}
 	s.kea = kea.NewClient(discoveryTestTransport(func(_ context.Context, req kea.CommandRequest, out any) error {
 		if req.Command != "list-commands" {
@@ -233,14 +232,18 @@ func TestConcurrentDiscoverySerializesRefreshes(t *testing.T) {
 		}
 		return json.Unmarshal([]byte(`[{"result":0,"arguments":["`+command+`"]}]`), out)
 	}))
-	results := make(chan error, 2)
-	go func() { _, err := s.discover(context.Background()); results <- err }()
+	type discoveryResult struct {
+		payload map[string]any
+		err     error
+	}
+	results := make(chan discoveryResult, 2)
+	go func() { payload, err := s.discover(context.Background()); results <- discoveryResult{payload, err} }()
 	<-firstStarted
 	secondStarted := make(chan struct{})
 	go func() {
 		close(secondStarted)
-		_, err := s.discover(context.Background())
-		results <- err
+		payload, err := s.discover(context.Background())
+		results <- discoveryResult{payload, err}
 	}()
 	<-secondStarted
 	// The first refresh remains blocked while another caller starts.
@@ -252,16 +255,20 @@ func TestConcurrentDiscoverySerializesRefreshes(t *testing.T) {
 		t.Errorf("overlapping refresh reached transport: calls = %d, want 1", got)
 	}
 	close(releaseFirst)
+	seen := make(map[string]bool)
 	for range 2 {
-		if err := <-results; err != nil {
-			t.Fatal(err)
+		result := <-results
+		if result.err != nil {
+			t.Fatal(result.err)
 		}
+		entries := result.payload["services"].([]map[string]any)
+		seen[entries[0]["commands"].([]string)[0]] = true
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("calls = %d, want 2", got)
 	}
-	if !reflect.DeepEqual(s.commandTools, map[string]bool{"config-get": true}) {
-		t.Fatalf("inventory = %v, want only the later refresh's config-get", s.commandTools)
+	if !reflect.DeepEqual(seen, map[string]bool{"config-get": true, "status-get": true}) {
+		t.Fatalf("availability reports = %v", seen)
 	}
 }
 
@@ -287,21 +294,25 @@ func TestCancelledDiscoveryPreservesInventory(t *testing.T) {
 	}))
 	defer endpoint.Close()
 	s := &Server{
-		kea:          kea.NewHTTP(endpoint.URL),
-		services:     []kea.Service{kea.Services.DHCP4, kea.Services.DHCP6},
-		mcp:          sdkmcp.NewServer(&sdkmcp.Implementation{Name: "test", Version: "1"}, nil),
-		commandTools: make(map[string]bool),
+		kea:      kea.NewHTTP(endpoint.URL),
+		services: []kea.Service{kea.Services.DHCP4, kea.Services.DHCP6},
+		mcp:      sdkmcp.NewServer(&sdkmcp.Implementation{Name: "test", Version: "1"}, nil),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := s.discover(ctx); err != nil {
 		t.Fatal(err)
 	}
+	s.registerCommandTools()
 	cs := connectTestClient(t, s.mcp)
+	initial, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertInventory := func() {
 		t.Helper()
 		tools, err := cs.ListTools(ctx, nil)
-		if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "kea_status_get" {
+		if err != nil || !reflect.DeepEqual(tools.Tools, initial.Tools) {
 			t.Fatalf("inventory = %v, error = %v; want original status-get", tools, err)
 		}
 	}
@@ -325,7 +336,7 @@ func TestCancelledDiscoveryPreservesInventory(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("cancelled refresh did not finish")
 	}
-	// The first service's new command must not replace the old union.
+	// Cancellation must not change the registered catalog.
 	assertInventory()
 	refreshing.Store(false)
 	if _, err := s.discover(ctx); err != nil {
@@ -334,7 +345,7 @@ func TestCancelledDiscoveryPreservesInventory(t *testing.T) {
 	assertInventory()
 }
 
-func TestDiscoveryNotifiesToolListChanges(t *testing.T) {
+func TestDiscoveryKeepsToolCatalogStable(t *testing.T) {
 	var mu sync.Mutex
 	command := "status-get"
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -373,32 +384,51 @@ func TestDiscoveryNotifiesToolListChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cs.Close()
-	// Each refresh changes exactly one tool, so a notification from an
-	// earlier refresh cannot satisfy the assertion for a later refresh.
-	for _, next := range []string{"status-get", ""} {
+	initial, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range []string{"status-get", "config-get", ""} {
 		mu.Lock()
 		command = next
 		mu.Unlock()
-		discoverTestTools(t, cs)
-		select {
-		case <-changed:
-		case <-ctx.Done():
-			t.Fatal("client did not receive notifications/tools/list_changed")
+		result, err := cs.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kea_discover", Arguments: map[string]any{}})
+		if err != nil || result.IsError {
+			t.Fatalf("discovery: %v %v", result, err)
 		}
-		tools, err := cs.ListTools(ctx, nil)
+		data, err := json.Marshal(result.StructuredContent)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := make(map[string]bool)
-		for _, tool := range tools.Tools {
-			got[tool.Name] = true
+		var payload struct {
+			Services []struct {
+				Commands []string          `json:"commands"`
+				Tools    map[string]string `json:"tools"`
+			} `json:"services"`
 		}
-		want := map[string]bool{"kea_discover": true}
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Services) != 1 {
+			t.Fatalf("services = %v", payload.Services)
+		}
+		wantCommands := []string{}
+		wantTools := map[string]string{}
 		if next != "" {
-			want[commandToolName(next)] = true
+			wantCommands = append(wantCommands, next)
+			wantTools[next] = commandToolName(next)
 		}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("notified inventory = %v, want %v", got, want)
+		if !reflect.DeepEqual(payload.Services[0].Commands, wantCommands) || !reflect.DeepEqual(payload.Services[0].Tools, wantTools) {
+			t.Fatalf("availability = %+v", payload.Services[0])
 		}
+		tools, err := cs.ListTools(ctx, nil)
+		if err != nil || !reflect.DeepEqual(tools.Tools, initial.Tools) {
+			t.Fatalf("catalog changed: %v %v", tools, err)
+		}
+	}
+	select {
+	case <-changed:
+		t.Fatal("discovery sent notifications/tools/list_changed for an unchanged catalog")
+	case <-time.After(100 * time.Millisecond):
 	}
 }

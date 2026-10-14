@@ -13,6 +13,7 @@ import (
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rannday/kea-mcp/config"
+	"github.com/rannday/kea-mcp/kea"
 )
 
 func TestAPIOnlyMCP(t *testing.T) {
@@ -50,25 +51,30 @@ func TestAPIOnlyMCP(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer cs.Close()
-				discoverTestTools(t, cs)
+				if len(requests) != 0 {
+					t.Fatal("startup contacted Kea")
+				}
 				tools, err := cs.ListTools(ctx, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
-				wantTools := map[string]bool{"kea_discover": true, "kea_list_commands": true, "kea_lease4_get": true, "kea_status_get": true, "kea_config_get": true, "kea_raw_command": true}
-				if !readOnly {
-					for _, name := range []string{"kea_config_set", "kea_shutdown", "kea_perfmon_get_all_durations"} {
-						wantTools[name] = true
+				wantTools := map[string]bool{"kea_discover": true, "kea_raw_command": true}
+				for _, command := range kea.KnownCommands() {
+					if !readOnly || kea.IsReadOnlyCommand(command) {
+						wantTools[commandToolName(command)] = kea.IsReadOnlyCommand(command)
 					}
 				}
+				wantTools["kea_raw_command"] = readOnly
 				if len(tools.Tools) != len(wantTools) {
-					t.Fatalf("tools = %v", tools.Tools)
+					t.Fatalf("tool count = %d, want %d", len(tools.Tools), len(wantTools))
 				}
 				for _, tool := range tools.Tools {
-					if !wantTools[tool.Name] {
-						t.Fatalf("unexpected tool %s", tool.Name)
+					readHint, known := wantTools[tool.Name]
+					if !known || tool.Annotations == nil || tool.Annotations.ReadOnlyHint != readHint {
+						t.Fatalf("unexpected tool or access hint: %+v", tool)
 					}
 				}
+				discoverTestTools(t, cs)
 				resources, err := cs.ListResources(ctx, nil)
 				if err != nil || len(resources.Resources) != 2 {
 					t.Fatalf("resources = %v, error = %v", resources, err)
@@ -183,7 +189,7 @@ func TestStartupDoesNotContactKea(t *testing.T) {
 		}
 		cs := connectTestClient(t, result.server)
 		tools, err := cs.ListTools(context.Background(), nil)
-		if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "kea_discover" {
+		if err != nil || len(tools.Tools) != len(kea.KnownCommands())+1 {
 			t.Fatalf("initial tools=%v error=%v", tools, err)
 		}
 		if calls.Load() != 0 {

@@ -1,5 +1,7 @@
 package kea
 
+import "slices"
+
 // commandAccess records ISC's Access labels for every command in the latest API
 // reference reviewed on 2026-10-13: https://kea.readthedocs.io/en/latest/api.html.
 // This is an access policy, not a claim of availability on a particular server.
@@ -245,4 +247,15 @@ func IsReadOnlyCommand(command string) bool {
 func IsKnownCommand(command string) bool {
 	_, ok := commandAccessPolicy[command]
 	return ok
+}
+
+// KnownCommands returns the reviewed command names in sorted order.
+// Availability on a particular service must still be checked live.
+func KnownCommands() []string {
+	commands := make([]string, 0, len(commandAccessPolicy))
+	for command := range commandAccessPolicy {
+		commands = append(commands, command)
+	}
+	slices.Sort(commands)
+	return commands
 }
