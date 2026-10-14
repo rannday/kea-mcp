@@ -56,10 +56,11 @@ func TestMultipleEndpointsAuthentication(t *testing.T) {
 			}
 			dir := t.TempDir()
 			secretSetting := "password='six-password'"
-			if source == "password_env" {
+			switch source {
+			case "password_env":
 				t.Setenv("KEA_SIX_PASSWORD", "six-password")
 				secretSetting = "password_env='KEA_SIX_PASSWORD'"
-			} else if source == "password_file" {
+			case "password_file":
 				if err := os.WriteFile(filepath.Join(dir, "password.txt"), []byte("six-password\n"), 0600); err != nil {
 					t.Fatal(err)
 				}

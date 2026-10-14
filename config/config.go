@@ -265,7 +265,7 @@ func resolveCredentials(a fileEndpoint, path string) (Endpoint, error) {
 	username := strings.TrimSpace(*a.Username)
 	password = strings.TrimSpace(password)
 	if username == "" && password == "" {
-		return Endpoint{}, errors.New("Basic auth requires non-empty credentials")
+		return Endpoint{}, errors.New("basic auth requires non-empty credentials")
 	}
 	return Endpoint{Auth: "basic", Username: username, Password: password}, nil
 }

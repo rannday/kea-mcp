@@ -38,7 +38,7 @@ func endpointTransport(endpoint config.Endpoint, options []kea.HTTPOption) (kea.
 		}
 	case "basic":
 		if endpoint.Username == "" && endpoint.Password == "" {
-			return nil, fmt.Errorf("Basic auth requires non-empty credentials")
+			return nil, fmt.Errorf("basic auth requires non-empty credentials")
 		}
 		options = append(options, kea.WithAuth(&kea.BasicAuth{Username: endpoint.Username, Password: endpoint.Password}))
 	default:
