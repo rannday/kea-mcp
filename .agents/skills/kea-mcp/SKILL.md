@@ -40,6 +40,19 @@ otherwise require a complete local set or auth=none. Resolve relative
 password_file paths from the TOML directory. Preserve credential presence checks and surrounding
 whitespace trimming; never include credential contents in errors.
 
+Explicit --config accepts any filename containing valid Kea TOML, including
+extensionless files. Automatic discovery accepts only .kea-mcp.toml.
+Shared api.tls supports ca_file and paired cert_file/key_file. Endpoint TLS
+tables replace the whole shared table; an empty table clears custom TLS settings.
+TLS inheritance is independent of authentication. Resolve certificate paths
+relative to the selected TOML directory or accept absolute paths. Load files at
+startup with secret-safe errors. Add custom CAs to system roots, preserve
+hostname and expiration checks, and reject TLS settings on HTTP. Never add a
+verification bypass. Keep endpoint TLS transports isolated and preserve request
+timeouts, redirect rejection, and caller-owned clients. Test with generated
+synthetic certificates, including mTLS and failed handshakes; do not inspect real
+certificate or private-key files.
+
 api.read_timeout_sec defaults to five seconds and bounds the entire HTTP request.
 --read-timeout-sec overrides the TOML value. api.max_response_bytes defaults to
 64 MiB; reject oversized replies without reporting partial data as success.

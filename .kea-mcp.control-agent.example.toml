@@ -20,6 +20,13 @@ read_only = false
 # Password-file paths are relative to this TOML file, or absolute.
 # password_file = "credentials/kea-password.txt"
 
+# Optional TLS certificates. Change api.url to HTTPS first.
+# Paths are relative to this TOML file, or absolute. Client files require a pair.
+# [api.tls]
+# ca_file = "certs/kea-ca.crt"
+# cert_file = "certs/mcp-client.crt"
+# key_file = "certs/mcp-client.key"
+
 [tools]
 # Broad command access needs an explicit opt-in and its own agent approval.
 raw_command = false

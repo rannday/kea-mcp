@@ -16,6 +16,13 @@ read_only = false
 # Password-file paths are relative to this TOML file, or absolute.
 # password_file = "credentials/kea-password.txt"
 
+# Optional shared TLS certificates. Change endpoint URLs to HTTPS first.
+# Paths are relative to this TOML file, or absolute. Client files require a pair.
+# [api.tls]
+# ca_file = "certs/kea-ca.crt"
+# cert_file = "certs/mcp-client.crt"
+# key_file = "certs/mcp-client.key"
+
 # Endpoints inherit shared auth. Override with a complete local credential set,
 # or auth = "none". Remove tables for services you do not run.
 [api.endpoints.dhcp4]
@@ -23,9 +30,16 @@ url = "http://127.0.0.1:8000"
 
 [api.endpoints.dhcp6]
 url = "http://127.0.0.1:8001"
+# Optional TLS override replaces the entire shared TLS table.
+# [api.endpoints.dhcp6.tls]
+# ca_file = "certs/kea6-ca.crt"
+# cert_file = "certs/kea6-client.crt"
+# key_file = "certs/kea6-client.key"
 
 [api.endpoints.d2]
 url = "http://127.0.0.1:8002"
+# To clear inherited TLS settings for this endpoint, uncomment an empty table:
+# [api.endpoints.d2.tls]
 
 [tools]
 # Broad command access needs an explicit opt-in and its own agent approval.

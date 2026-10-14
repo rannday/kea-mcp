@@ -4,7 +4,7 @@ Go STDIO Model Context Protocol server for the ISC Kea API. Supports direct
 daemon HTTP/HTTPS endpoints and the older Kea Control Agent. All Kea access
 goes through the API; no database connection is required.
 
-Configuration uses a TOML dotfile.
+Configuration uses TOML.
 
 ## Installation
 
@@ -36,13 +36,14 @@ Use direct mode for Kea 3.0 and newer; older deployments can use the Control
 Agent. Both example files select their mode explicitly. Omitting `api.mode`
 still selects `control-agent` for compatibility. There is no automatic probing
 or fallback. See [ISC's API socket guidance](https://kb.isc.org/docs/kea-api-sockets).
-Unix sockets and TLS client certificates are not currently implemented.
+Unix sockets are not currently implemented.
 
 ## Configuration
 
 Configuration is selected in this order:
 
-1. An explicit `--config PATH` (relative to the process working directory).
+1. An explicit `--config PATH`: any filename containing valid Kea TOML, with
+   relative paths resolved from the process working directory.
 2. `.kea-mcp.toml` in the process working directory.
 3. `~/.agents/.kea-mcp.toml`.
 4. `~/.codex/.kea-mcp.toml`.
@@ -52,6 +53,8 @@ are not merged. A missing explicit file, unreadable selected file, or invalid
 configuration stops startup. Discovery checks the working directory only, not
 parent directories. If no file exists, startup stops with instructions to create
 `.kea-mcp.toml` or use `--config`. No dotenv files are loaded.
+Automatic discovery accepts only `.kea-mcp.toml`; custom filenames in
+`~/.agents/` or `~/.codex/` require an explicit `--config` path too.
 
 Unknown tables and keys are rejected, including misspelled security settings.
 HTTP response bodies are limited to 64 MiB by default. Set a positive integer
@@ -135,7 +138,7 @@ auth = "none"
 ```
 
 Endpoint tables accept `url`, `auth`, `username`, `password`, `password_env`,
-and `password_file`. An endpoint with no auth or credential settings inherits
+`password_file`, and a `tls` table. An endpoint with no auth or credential settings inherits
 the `[api]` authentication settings. To override them, supply a complete local
 credential set or `auth = "none"`; partial credential overrides are rejected.
 With no shared or local credentials, endpoints use no authentication.
@@ -144,6 +147,49 @@ Only configured services are exposed. `api.endpoints` requires direct mode and
 cannot be combined with `api.url`, `api.service`, or `api.services`.
 Read-only policy, response limits, and request timeouts apply to every endpoint.
 Restart the MCP server after changing endpoint or authentication settings.
+
+### TLS certificates
+
+HTTPS uses system certificate trust and verifies the server's certificate and
+hostname. IP URLs require a matching IP subject alternative name in the server
+certificate. For a private CA or mutual TLS, configure:
+
+```toml
+[api.tls]
+ca_file = "certs/kea-ca.crt"
+# Optional client identity for mutual TLS; supply both files.
+cert_file = "certs/mcp-client.crt"
+key_file = "certs/mcp-client.key"
+```
+
+Paths can be absolute or relative to the selected Kea TOML file's directory,
+independently of the MCP process working directory. Files must contain PEM
+certificates and an unencrypted client private key. `ca_file` adds certificates
+to system trust; it does not replace system roots. Omit it for public/system
+trusted servers. Omit both client files when the server does not require mTLS.
+TLS identity and Basic auth are independent and can be used together.
+
+Direct endpoints inherit `[api.tls]`. A local TLS table replaces the entire
+shared TLS table; it does not merge individual fields:
+
+```toml
+[api.endpoints.dhcp6]
+url = "https://kea6.example:8001"
+[api.endpoints.dhcp6.tls]
+ca_file = "certs/kea6-ca.crt"
+cert_file = "certs/kea6-client.crt"
+key_file = "certs/kea6-client.key"
+
+[api.endpoints.d2]
+url = "http://127.0.0.1:8002"
+[api.endpoints.d2.tls]
+# Empty table clears inherited custom certificates and client identity.
+```
+
+Certificate settings require HTTPS. Incomplete client pairs, unknown TLS keys,
+and missing or unusable certificate files stop startup. Server trust, expiration,
+and hostname failures reject requests. Certificate verification cannot be
+disabled. Restart the MCP server after rotating certificate files.
 
 ### MCP client configuration
 
@@ -154,15 +200,20 @@ MCP servers. Add this to your Codex `config.toml`:
 [mcp_servers.kea]
 default_tools_approval_mode = "prompt"
 command = "/absolute/path/to/kea-mcp"
-args = ["--config", "/absolute/path/to/.kea-mcp.toml", "--read-timeout-sec", "90"]
+args = ["--config", "/absolute/path/to/kea-production.toml", "--read-timeout-sec", "90"]
 startup_timeout_sec = 90
 tool_timeout_sec = 420
+
+[mcp_servers.kea.tools]
+kea_discover = { approval_mode = "approve" }
+kea_status_get = { approval_mode = "approve" }
 ```
 
 Use `kea-mcp.exe` on Windows and TOML literal strings or forward slashes for
 Windows paths. For discovery instead, omit `args` and set
 `cwd = "/absolute/path/to/project"`. The agent configuration launches the
-process; the separate `.kea-mcp.toml` supplies Kea settings. These options
+process; the separate Kea TOML supplies endpoints, authentication, and TLS settings.
+Per-tool approval entries use this server's `kea_` tool names. These options
 are documented in the [Codex MCP documentation](https://developers.openai.com/codex/mcp/).
 
 `startup_timeout_sec` and `tool_timeout_sec` are Codex client settings, not

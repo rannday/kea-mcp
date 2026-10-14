@@ -24,6 +24,16 @@ func (routes serviceTransport) Call(ctx context.Context, req kea.CommandRequest,
 }
 
 func endpointTransport(endpoint config.Endpoint, options []kea.HTTPOption) (kea.Transport, error) {
+	if err := endpoint.TLS.Validate(endpoint.URL); err != nil {
+		return nil, err
+	}
+	if endpoint.TLS != (config.TLS{}) {
+		transport, err := certificateTransport(endpoint.TLS)
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, kea.WithRoundTripper(transport))
+	}
 	auth := strings.ToLower(strings.TrimSpace(endpoint.Auth))
 	if auth == "" {
 		auth = "none"

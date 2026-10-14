@@ -29,6 +29,7 @@ type Config struct {
 	APIUsername      string
 	APIPassword      string
 	APIAuth          string
+	APITLS           TLS
 	APIEndpoints     map[string]Endpoint
 	MaxResponseBytes int64
 	ReadTimeoutSec   int64
@@ -40,15 +41,17 @@ type Endpoint struct {
 	Auth     string
 	Username string
 	Password string
+	TLS      TLS
 }
 
 type fileEndpoint struct {
-	URL          string  `toml:"url"`
-	Auth         string  `toml:"auth"`
-	Username     *string `toml:"username"`
-	Password     *string `toml:"password"`
-	PasswordEnv  *string `toml:"password_env"`
-	PasswordFile *string `toml:"password_file"`
+	URL          string   `toml:"url"`
+	Auth         string   `toml:"auth"`
+	Username     *string  `toml:"username"`
+	Password     *string  `toml:"password"`
+	PasswordEnv  *string  `toml:"password_env"`
+	PasswordFile *string  `toml:"password_file"`
+	TLS          *fileTLS `toml:"tls"`
 }
 
 // ValidateReadTimeoutSec ensures seconds fit in a positive Go duration.
@@ -94,6 +97,7 @@ func loadFile(path string) (Config, error) {
 			Services         []string                `toml:"services"`
 			URL              string                  `toml:"url"`
 			Auth             string                  `toml:"auth"`
+			TLS              *fileTLS                `toml:"tls"`
 			Endpoints        map[string]fileEndpoint `toml:"endpoints"`
 			Username         *string                 `toml:"username"`
 			Password         *string                 `toml:"password"`
@@ -122,8 +126,11 @@ func loadFile(path string) (Config, error) {
 		return Config{}, errors.New("invalid configuration tables: expected api and tools")
 	}
 	allowed := map[string][]string{
-		"api":   {"read_only", "mode", "service", "services", "url", "auth", "endpoints", "username", "password", "password_env", "password_file", "max_response_bytes", "read_timeout_sec"},
+		"api":   {"read_only", "mode", "service", "services", "url", "auth", "tls", "endpoints", "username", "password", "password_env", "password_file", "max_response_bytes", "read_timeout_sec"},
 		"tools": {"raw_command"},
+	}
+	if err := validateTLSKeys(keys["api"]); err != nil {
+		return Config{}, err
 	}
 	if raw, exists := keys["api"]["endpoints"]; exists {
 		endpoints, ok := raw.(map[string]any)
@@ -138,8 +145,11 @@ func loadFile(path string) (Config, error) {
 			if !ok {
 				return Config{}, errors.New("invalid api.endpoints table")
 			}
+			if err := validateTLSKeys(fields); err != nil {
+				return Config{}, err
+			}
 			for key := range fields {
-				if !slices.Contains([]string{"url", "auth", "username", "password", "password_env", "password_file"}, key) {
+				if !slices.Contains([]string{"url", "auth", "tls", "username", "password", "password_env", "password_file"}, key) {
 					return Config{}, errors.New("unknown endpoint key: use documented URL and authentication settings")
 				}
 			}
@@ -176,6 +186,10 @@ func loadFile(path string) (Config, error) {
 		return Config{}, fmt.Errorf("api: %w", err)
 	}
 	cfg := Config{ReadOnly: a.ReadOnly, RawCommand: file.Tools.RawCommand, APIMode: a.Mode, APIService: a.Service, APIServices: a.Services, APIURL: a.URL, APIAuth: defaults.Auth, APIUsername: defaults.Username, APIPassword: defaults.Password, MaxResponseBytes: maxResponseBytes, ReadTimeoutSec: readTimeoutSec}
+	cfg.APITLS, err = resolveTLS(a.TLS, path)
+	if err != nil {
+		return Config{}, fmt.Errorf("api.tls: %w", err)
+	}
 	if a.Endpoints != nil {
 		cfg.APIEndpoints = make(map[string]Endpoint, len(a.Endpoints))
 		for name, settings := range a.Endpoints {
@@ -190,12 +204,25 @@ func loadFile(path string) (Config, error) {
 			if err != nil {
 				return Config{}, fmt.Errorf("api.endpoints.%s: %w", name, err)
 			}
+			endpoint.TLS = cfg.APITLS
+			if settings.TLS != nil {
+				endpoint.TLS, err = resolveTLS(settings.TLS, path)
+				if err != nil {
+					return Config{}, fmt.Errorf("api.endpoints.%s.tls: %w", name, err)
+				}
+			}
+			if err := endpoint.TLS.Validate(endpoint.URL); err != nil {
+				return Config{}, fmt.Errorf("api.endpoints.%s: %w", name, err)
+			}
 			cfg.APIEndpoints[name] = endpoint
 		}
 	} else {
 		cfg.APIURL, err = validateURL(a.URL)
 		if err != nil {
 			return Config{}, fmt.Errorf("api: %w", err)
+		}
+		if err := cfg.APITLS.Validate(cfg.APIURL); err != nil {
+			return Config{}, err
 		}
 	}
 	return normalize(cfg)

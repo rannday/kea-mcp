@@ -123,7 +123,7 @@ func New(cfg config.Config) (*sdkmcp.Server, error) {
 	}
 	if transport == nil {
 		var err error
-		transport, err = endpointTransport(config.Endpoint{URL: cfg.APIURL, Auth: cfg.APIAuth, Username: cfg.APIUsername, Password: cfg.APIPassword}, options)
+		transport, err = endpointTransport(config.Endpoint{URL: cfg.APIURL, Auth: cfg.APIAuth, Username: cfg.APIUsername, Password: cfg.APIPassword, TLS: cfg.APITLS}, options)
 		if err != nil {
 			return nil, err
 		}

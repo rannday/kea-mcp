@@ -68,6 +68,19 @@ func WithHTTPClient(hc *http.Client) HTTPOption {
 	}
 }
 
+// WithRoundTripper sets an endpoint-specific HTTP transport without changing
+// the caller-owned client or its timeout.
+func WithRoundTripper(transport http.RoundTripper) HTTPOption {
+	return func(t *HTTPTransport) {
+		if t.httpClient == nil {
+			return
+		}
+		client := *t.httpClient
+		client.Transport = transport
+		t.httpClient = &client
+	}
+}
+
 // WithAuth sets a request auth provider.
 func WithAuth(auth AuthProvider) HTTPOption {
 	return func(t *HTTPTransport) {
