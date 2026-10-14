@@ -49,8 +49,9 @@ relative to the selected TOML directory or accept absolute paths. Load files at
 startup with secret-safe errors. Add custom CAs to system roots, preserve
 hostname and expiration checks, and reject TLS settings on HTTP. Never add a
 verification bypass. Keep endpoint TLS transports isolated and preserve request
-timeouts, redirect rejection, and caller-owned clients. Test with generated
-synthetic certificates, including mTLS and failed handshakes; do not inspect real
+timeouts, redirect rejection, and caller-owned clients. Test with synthetic
+certificates (public pre-generated integration fixtures or generated unit-test
+identities), including mTLS and failed handshakes; do not inspect real
 certificate or private-key files.
 
 api.read_timeout_sec defaults to five seconds and bounds the entire HTTP request.

@@ -3,17 +3,10 @@
 package integration
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
-	"math/big"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -70,8 +63,8 @@ func (s *securityFixture) clientSettings(service, table string) string {
 	return result
 }
 
-// All credentials are public test values; certificates and keys exist only in
-// the test's temporary directory. Kea itself terminates TLS and checks Basic auth.
+// All credentials and certificate keys are public test fixtures. Copies and
+// modified configurations live in a temporary directory. Kea terminates TLS.
 func prepareSecurity(t *testing.T, mode string) *securityFixture {
 	t.Helper()
 	profile := os.Getenv("KEA_INTEGRATION_SECURITY")
@@ -94,26 +87,25 @@ func prepareSecurity(t *testing.T, mode string) *securityFixture {
 		writeFixture(t, s.configDir, name, data)
 	}
 	if s.scheme() == "https" {
-		ca, key, der := makeCA(t)
-		writeFixture(t, s.configDir, "ca.crt", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-		s.roots = x509.NewCertPool()
-		s.roots.AddCert(ca)
-		cert, identity := issueCertificate(t, ca, key, false)
-		writeFixture(t, s.configDir, "server.crt", cert)
-		writeFixture(t, s.configDir, "server.key", identity)
-		cert, identity = issueCertificate(t, ca, key, true)
-		writeFixture(t, s.configDir, "client.crt", cert)
-		writeFixture(t, s.configDir, "client.key", identity)
-		var err error
-		s.client, err = tls.X509KeyPair(cert, identity)
+		for _, name := range []string{"ca.crt", "server.crt", "server.key", "client.crt", "client.key", "untrusted-ca.crt", "untrusted-client.crt", "untrusted-client.key"} {
+			data, err := os.ReadFile(filepath.Join("testdata", "certs", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFixture(t, s.configDir, name, data)
+		}
+		ca, err := os.ReadFile(filepath.Join(s.configDir, "ca.crt"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		otherCA, otherKey, otherDER := makeCA(t)
-		writeFixture(t, s.configDir, "untrusted-ca.crt", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: otherDER}))
-		cert, identity = issueCertificate(t, otherCA, otherKey, true)
-		writeFixture(t, s.configDir, "untrusted-client.crt", cert)
-		writeFixture(t, s.configDir, "untrusted-client.key", identity)
+		s.roots = x509.NewCertPool()
+		if !s.roots.AppendCertsFromPEM(ca) {
+			t.Fatal("invalid test CA certificate")
+		}
+		s.client, err = tls.LoadX509KeyPair(filepath.Join(s.configDir, "client.crt"), filepath.Join(s.configDir, "client.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if mode == "control-agent" {
 		s.configureListener(t, "kea-ctrl-agent.conf", "Control-agent", "agent")
@@ -164,61 +156,6 @@ func writeFixture(t *testing.T, dir, name string, data []byte) {
 	if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func makeCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey, []byte) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := certificateTemplate(t)
-	template.Subject = pkix.Name{CommonName: "ephemeral Kea integration CA"}
-	template.IsCA, template.BasicConstraintsValid = true, true
-	template.KeyUsage = x509.KeyUsageCertSign | x509.KeyUsageCRLSign
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ca, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return ca, key, der
-}
-
-func certificateTemplate(t *testing.T) *x509.Certificate {
-	t.Helper()
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &x509.Certificate{SerialNumber: serial, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature}
-}
-
-func issueCertificate(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, client bool) ([]byte, []byte) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := certificateTemplate(t)
-	template.Subject = pkix.Name{CommonName: "ephemeral Kea integration identity"}
-	if client {
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
-	} else {
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
-		template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, ca, &key.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: identity})
 }
 
 func testSecurity(t *testing.T, binary string, stack *lab) {

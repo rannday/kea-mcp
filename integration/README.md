@@ -43,10 +43,12 @@ go test -tags=integration -count=1 -timeout=10m -v ./integration
 Remove-Item Env:KEA_INTEGRATION_SECURITY
 ```
 
-Use either API mode with any profile. Certificates, private keys, and modified
-listener configurations are generated in a temporary directory for each run and
-removed during cleanup. Credentials are public lab values, with distinct users
-and passwords for each direct endpoint. No production credentials are used.
+Use either API mode with any profile. Pre-generated public test certificates and
+private keys live in `testdata/certs`; see its README for validity and regeneration.
+Each run copies them into a temporary directory alongside modified listener
+configurations and removes those copies during cleanup. Credentials are public
+lab values, with distinct users and passwords for each direct endpoint. No
+production credentials are used.
 
 ## Run on Linux
 
@@ -92,7 +94,7 @@ Ordinary `go test ./...` excludes this suite; the `integration` build tag and
   DHCP4/D2 calls, preserved tool inventory, and recovery with the same config.
 - Native Basic Auth accepts valid credentials and rejects missing or wrong
   credentials. Direct endpoints reject another endpoint's credentials.
-- Native TLS accepts the generated trusted server certificate and rejects an
+- Native TLS accepts the fixture's trusted server certificate and rejects an
   untrusted CA and a hostname mismatch.
 - Native mutual TLS accepts a trusted client certificate and rejects missing
   client identities and identities signed by an unrelated CA.
