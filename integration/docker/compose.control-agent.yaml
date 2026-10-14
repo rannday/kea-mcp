@@ -1,0 +1,37 @@
+# Override the direct lab with ISC's pre-3.0 daemons and a real Control Agent.
+services:
+  dhcp4:
+    image: docker.cloudsmith.io/isc/docker/kea-dhcp4:2.6.1
+    environment:
+      KEA_INTEGRATION_MODE: control-agent
+    volumes:
+      - control-sockets:/run/kea
+  dhcp6:
+    image: docker.cloudsmith.io/isc/docker/kea-dhcp6:2.6.1
+    environment:
+      KEA_INTEGRATION_MODE: control-agent
+    volumes:
+      - control-sockets:/run/kea
+  ddns:
+    image: docker.cloudsmith.io/isc/docker/kea-dhcp-ddns:2.6.1
+    environment:
+      KEA_INTEGRATION_MODE: control-agent
+    volumes:
+      - control-sockets:/run/kea
+  agent:
+    # ISC's DHCP4 image ships kea-ctrl-agent as well as the DHCP4 executable.
+    image: docker.cloudsmith.io/isc/docker/kea-dhcp4:2.6.1
+    entrypoint: ["kea-ctrl-agent", "-c", "/config/kea-ctrl-agent.conf"]
+    command: []
+    depends_on:
+      - dhcp4
+      - dhcp6
+      - ddns
+    volumes:
+      - ${KEA_INTEGRATION_CONFIG_DIR:-./config}:/config:ro
+      - control-sockets:/run/kea
+    ports:
+      - "127.0.0.1:${KEA_INTEGRATION_AGENT_PORT:-0}:8003"
+
+volumes:
+  control-sockets:

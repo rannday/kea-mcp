@@ -1,0 +1,13 @@
+$TTL 300
+@ IN SOA ns.lab.example.test. hostmaster.lab.example.test. (
+    2026101301 ; serial
+    3600       ; refresh
+    600        ; retry
+    604800     ; expire
+    300        ; negative cache TTL
+)
+@ IN NS ns.lab.example.test.
+ns IN A 192.0.2.53
+ns IN AAAA 2001:db8:1::53
+www IN A 192.0.2.80
+www IN AAAA 2001:db8:1::80

@@ -1,0 +1,51 @@
+name: kea-mcp-integration
+
+services:
+  dhcp4:
+    image: docker.cloudsmith.io/isc/docker/kea-dhcp4:latest
+    entrypoint: ["sh", "/config/kea-entrypoint.sh", "kea-dhcp4"]
+    command: []
+    depends_on:
+      - ddns
+    volumes:
+      - ${KEA_INTEGRATION_CONFIG_DIR:-./config}:/config:ro
+      - dhcp4-leases:/var/lib/kea
+    ports:
+      - "127.0.0.1:${KEA_INTEGRATION_DHCP4_PORT:-0}:8000"
+
+  dhcp6:
+    image: docker.cloudsmith.io/isc/docker/kea-dhcp6:latest
+    entrypoint: ["sh", "/config/kea-entrypoint.sh", "kea-dhcp6"]
+    command: []
+    depends_on:
+      - ddns
+    volumes:
+      - ${KEA_INTEGRATION_CONFIG_DIR:-./config}:/config:ro
+      - dhcp6-leases:/var/lib/kea
+    ports:
+      - "127.0.0.1:${KEA_INTEGRATION_DHCP6_PORT:-0}:8001"
+
+  ddns:
+    image: docker.cloudsmith.io/isc/docker/kea-dhcp-ddns:latest
+    entrypoint: ["sh", "/config/kea-entrypoint.sh", "kea-dhcp-ddns"]
+    command: []
+    depends_on:
+      - dns
+    volumes:
+      - ${KEA_INTEGRATION_CONFIG_DIR:-./config}:/config:ro
+    ports:
+      - "127.0.0.1:${KEA_INTEGRATION_D2_PORT:-0}:8002"
+
+  dns:
+    image: internetsystemsconsortium/bind9:9.20
+    entrypoint: ["sh", "/config/entrypoint.sh"]
+    command: []
+    volumes:
+      - ./dns:/config:ro
+      - ./dns/named.conf:/etc/bind/named.conf:ro
+      - dns-data:/var/cache/bind
+
+volumes:
+  dhcp4-leases:
+  dhcp6-leases:
+  dns-data:
