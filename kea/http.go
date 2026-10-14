@@ -147,27 +147,39 @@ func (t *HTTPTransport) Call(ctx context.Context, req CommandRequest, out any) e
 
 	resp, err := t.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("send request: %w", err)
+		return uncertainOutcome(req, fmt.Errorf("send request: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxHTTPErrorDrain))
-		return fmt.Errorf("kea error: status=%d", resp.StatusCode)
+		return uncertainOutcome(req, fmt.Errorf("kea error: status=%d", resp.StatusCode))
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, t.maxResponseBytes+1))
 	if err != nil {
-		return fmt.Errorf("read response: %w", err)
+		return uncertainOutcome(req, fmt.Errorf("read response: %w", err))
 	}
 	if int64(len(data)) > t.maxResponseBytes {
-		return fmt.Errorf("kea response exceeds %d byte limit", t.maxResponseBytes)
+		return uncertainOutcome(req, fmt.Errorf("kea response exceeds %d byte limit", t.maxResponseBytes))
 	}
 	// Unmarshal consumes the whole body, rejecting trailing JSON or garbage.
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("unmarshal response: %w", err)
+		return uncertainOutcome(req, fmt.Errorf("unmarshal response: %w", err))
 	}
-	return validateCommandResponses(out)
+	err = validateCommandResponses(out)
+	var responseErr *ResponseError
+	if err != nil && !errors.As(err, &responseErr) {
+		return uncertainOutcome(req, err)
+	}
+	return err
+}
+
+func uncertainOutcome(req CommandRequest, err error) error {
+	if !IsReadOnlyCommand(req.Command) {
+		return &OutcomeUnknownError{Err: err}
+	}
+	return err
 }
 
 func validateCommandResponses(out any) error {
@@ -180,7 +192,7 @@ func validateCommandResponses(out any) error {
 	}
 	for _, r := range *responses {
 		if err := r.Result.ResultError(r.Text); err != nil {
-			return err
+			return &ResponseError{Responses: *responses, Err: err}
 		}
 	}
 	return nil

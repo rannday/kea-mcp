@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/rannday/go-kit/modules/confx"
 )
@@ -28,6 +29,15 @@ type Config struct {
 	APIUsername      string
 	APIPassword      string
 	MaxResponseBytes int64
+	ReadTimeoutSec   int64
+}
+
+// ValidateReadTimeoutSec ensures seconds fit in a positive Go duration.
+func ValidateReadTimeoutSec(seconds int64) error {
+	if seconds <= 0 || seconds > math.MaxInt64/int64(time.Second) {
+		return errors.New("read_timeout_sec must be a positive integer no greater than 9223372036")
+	}
+	return nil
 }
 
 // Load selects an explicit file, then cwd, ~/.agents, and ~/.codex in order.
@@ -69,6 +79,7 @@ func loadFile(path string) (Config, error) {
 			PasswordEnv      *string  `toml:"password_env"`
 			PasswordFile     *string  `toml:"password_file"`
 			MaxResponseBytes *int64   `toml:"max_response_bytes"`
+			ReadTimeoutSec   *int64   `toml:"read_timeout_sec"`
 		} `toml:"api"`
 		Tools struct {
 			RawCommand bool `toml:"raw_command"`
@@ -90,7 +101,7 @@ func loadFile(path string) (Config, error) {
 		return Config{}, errors.New("invalid configuration tables: expected api and tools")
 	}
 	allowed := map[string][]string{
-		"api":   {"read_only", "mode", "service", "services", "url", "username", "password", "password_env", "password_file", "max_response_bytes"},
+		"api":   {"read_only", "mode", "service", "services", "url", "username", "password", "password_env", "password_file", "max_response_bytes", "read_timeout_sec"},
 		"tools": {"raw_command"},
 	}
 	for table, fields := range keys {
@@ -105,6 +116,13 @@ func loadFile(path string) (Config, error) {
 		}
 	}
 	a := file.API
+	var readTimeoutSec int64
+	if a.ReadTimeoutSec != nil {
+		readTimeoutSec = *a.ReadTimeoutSec
+		if err := ValidateReadTimeoutSec(readTimeoutSec); err != nil {
+			return Config{}, fmt.Errorf("api.%w", err)
+		}
+	}
 	var maxResponseBytes int64
 	if a.MaxResponseBytes != nil {
 		maxResponseBytes = *a.MaxResponseBytes
@@ -157,7 +175,7 @@ func loadFile(path string) (Config, error) {
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
 		return Config{}, errors.New("invalid api.url: expected HTTP/HTTPS URL without embedded credentials")
 	}
-	return normalize(Config{ReadOnly: a.ReadOnly, RawCommand: file.Tools.RawCommand, APIMode: a.Mode, APIService: a.Service, APIServices: a.Services, APIURL: strings.TrimRight(endpoint, "/"), APIUsername: *a.Username, APIPassword: password, MaxResponseBytes: maxResponseBytes})
+	return normalize(Config{ReadOnly: a.ReadOnly, RawCommand: file.Tools.RawCommand, APIMode: a.Mode, APIService: a.Service, APIServices: a.Services, APIURL: strings.TrimRight(endpoint, "/"), APIUsername: *a.Username, APIPassword: password, MaxResponseBytes: maxResponseBytes, ReadTimeoutSec: readTimeoutSec})
 }
 
 func normalize(cfg Config) (Config, error) {

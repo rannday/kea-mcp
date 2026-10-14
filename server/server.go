@@ -4,10 +4,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rannday/kea-mcp/config"
 	"github.com/rannday/kea-mcp/kea"
@@ -51,6 +54,12 @@ func New(cfg config.Config) (*sdkmcp.Server, error) {
 		Username: cfg.APIUsername,
 		Password: cfg.APIPassword,
 	})}
+	if cfg.ReadTimeoutSec != 0 {
+		if err := config.ValidateReadTimeoutSec(cfg.ReadTimeoutSec); err != nil {
+			return nil, err
+		}
+		options = append(options, kea.WithHTTPClient(&http.Client{Timeout: time.Duration(cfg.ReadTimeoutSec) * time.Second}))
+	}
 	if cfg.MaxResponseBytes != 0 {
 		options = append(options, kea.WithMaxResponseBytes(cfg.MaxResponseBytes))
 	}
@@ -89,7 +98,7 @@ func New(cfg config.Config) (*sdkmcp.Server, error) {
 		readOnly:     cfg.ReadOnly,
 		commandTools: make(map[string]bool),
 	}
-	instructions := "Use command-specific tools against configured Kea services. Run kea_discover to refresh availability after daemon or hook changes. Write tools can modify configuration, leases, and service state."
+	instructions := "Run kea_discover first to register command-specific tools against configured Kea services, and again after daemon or hook changes. Write tools can modify configuration, leases, and service state."
 	if cfg.ReadOnly {
 		instructions += " Read-only mode is enabled: write and unknown commands are rejected."
 	}
@@ -128,9 +137,7 @@ func New(cfg config.Config) (*sdkmcp.Server, error) {
 		MIMEType:    "application/json",
 		URI:         "kea://api/examples/status-get",
 	}, srv.readStatusExamplesResource)
-	// An unavailable endpoint does not prevent MCP startup: discovery remains
-	// available so callers can recover without restarting the process.
-	_, _ = srv.discover(context.Background())
+	// Discovery is on demand; MCP initialization never waits for a Kea endpoint.
 	return mcpServer, nil
 }
 
@@ -198,7 +205,19 @@ func (s *Server) commandTool(ctx context.Context, rawService, command string, ar
 
 	responses, err := kea.CallCommandWithArguments(ctx, s.kea, command, arguments, service)
 	if err != nil {
-		return toolError(err), nil, nil
+		payload := map[string]any{"service": service.Name(), "command": command, "error": err.Error()}
+		if len(responses) > 0 {
+			payload["responses"] = responses
+		}
+		var unknown *kea.OutcomeUnknownError
+		if errors.As(err, &unknown) {
+			payload["outcome_unknown"] = true
+		}
+		data, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			return toolError(marshalErr), nil, nil
+		}
+		return &sdkmcp.CallToolResult{IsError: true, StructuredContent: payload, Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: string(data)}}}, nil, nil
 	}
 	if s.readOnly && command == "list-commands" {
 		for i := range responses {
@@ -225,7 +244,11 @@ func (s *Server) examplePayload(ctx context.Context, command, docPath string) (m
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			examples = append(examples, map[string]any{"service": service.Name(), "error": err.Error()})
+			failure := map[string]any{"service": service.Name(), "error": err.Error()}
+			if len(responses) > 0 {
+				failure["responses"] = responses
+			}
+			examples = append(examples, failure)
 			continue
 		}
 		examples = append(examples, map[string]any{

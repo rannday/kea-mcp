@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rannday/kea-mcp/config"
@@ -48,6 +50,7 @@ func TestAPIOnlyMCP(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer cs.Close()
+				discoverTestTools(t, cs)
 				tools, err := cs.ListTools(ctx, nil)
 				if err != nil {
 					t.Fatal(err)
@@ -155,6 +158,121 @@ func TestAPIOnlyMCP(t *testing.T) {
 	}
 }
 
+func TestStartupDoesNotContactKea(t *testing.T) {
+	var calls atomic.Int32
+	release := make(chan struct{})
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		<-release
+	}))
+	defer endpoint.Close()
+	defer close(release)
+	type built struct {
+		server *sdkmcp.Server
+		err    error
+	}
+	ready := make(chan built, 1)
+	go func() {
+		srv, err := New(config.Config{APIURL: endpoint.URL, APIUsername: "test", APIPassword: "test", ReadTimeoutSec: 90})
+		ready <- built{srv, err}
+	}()
+	select {
+	case result := <-ready:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		cs := connectTestClient(t, result.server)
+		tools, err := cs.ListTools(context.Background(), nil)
+		if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "kea_discover" {
+			t.Fatalf("initial tools=%v error=%v", tools, err)
+		}
+		if calls.Load() != 0 {
+			t.Fatalf("startup sent %d Kea requests", calls.Load())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("MCP startup waited for blocked Kea endpoint")
+	}
+}
+
+func TestMCPStructuredFailures(t *testing.T) {
+	for _, mode := range []string{"control-agent", "direct"} {
+		for _, code := range []int{1, 2, 4, 5, 99} {
+			t.Run(fmt.Sprintf("%s/result=%d", mode, code), func(t *testing.T) {
+				endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var request map[string]json.RawMessage
+					json.NewDecoder(r.Body).Decode(&request)
+					if string(request["command"]) == `"list-commands"` {
+						w.Write([]byte(`[{"result":0,"arguments":["config-set"]}]`))
+						return
+					}
+					fmt.Fprintf(w, `[{"result":0,"text":"first succeeded"},{"result":%d,"text":"failed","arguments":{"failed-leases":[{"ip-address":"2001:db8::1"}],"id":9007199254740993}}]`, code)
+				}))
+				defer endpoint.Close()
+				srv, err := New(config.Config{APIMode: mode, APIService: "dhcp4", APIURL: endpoint.URL, APIUsername: "test", APIPassword: "test"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				cs := connectTestClient(t, srv)
+				discoverTestTools(t, cs)
+				result, err := cs.CallTool(context.Background(), &sdkmcp.CallToolParams{Name: "kea_config_set", Arguments: map[string]any{"service": "dhcp4"}})
+				if err != nil || !result.IsError || result.StructuredContent == nil {
+					t.Fatalf("result=%v error=%v", result, err)
+				}
+				text := result.Content[0].(*sdkmcp.TextContent).Text
+				var payload struct {
+					Responses []json.RawMessage `json:"responses"`
+					Error     string            `json:"error"`
+				}
+				if err := json.Unmarshal([]byte(text), &payload); err != nil {
+					t.Fatal(err)
+				}
+				if len(payload.Responses) != 2 || !strings.Contains(text, "failed-leases") || !strings.Contains(text, "9007199254740993") {
+					t.Fatalf("failure envelopes lost: %s", text)
+				}
+				if code == 5 && !strings.Contains(payload.Error, "previous configuration was not restored") {
+					t.Fatalf("rollback meaning missing: %s", text)
+				}
+			})
+		}
+	}
+}
+
+func TestConfiguredReadTimeout(t *testing.T) {
+	var writes atomic.Int32
+	release := make(chan struct{})
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]json.RawMessage
+		json.NewDecoder(r.Body).Decode(&request)
+		if string(request["command"]) == `"list-commands"` {
+			w.Write([]byte(`[{"result":0,"arguments":["config-set"]}]`))
+			return
+		}
+		writes.Add(1)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer endpoint.Close()
+	defer close(release)
+	srv, err := New(config.Config{APIMode: "direct", APIService: "dhcp4", APIURL: endpoint.URL, APIUsername: "test", APIPassword: "test", ReadTimeoutSec: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := connectTestClient(t, srv)
+	discoverTestTools(t, cs)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := cs.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kea_config_set", Arguments: map[string]any{"service": "dhcp4"}})
+	if err != nil || !result.IsError || ctx.Err() != nil {
+		t.Fatalf("configured timeout did not complete before caller deadline: %v %v", result, err)
+	}
+	text := result.Content[0].(*sdkmcp.TextContent).Text
+	if !strings.Contains(text, `"outcome_unknown":true`) || !strings.Contains(text, "before retrying") || writes.Load() != 1 {
+		t.Fatalf("timeout response=%s writes=%d", text, writes.Load())
+	}
+}
+
 func TestMCPPreservesArgumentJSON(t *testing.T) {
 	for _, mode := range []string{"control-agent", "direct"} {
 		t.Run(mode, func(t *testing.T) {
@@ -177,6 +295,7 @@ func TestMCPPreservesArgumentJSON(t *testing.T) {
 				t.Fatal(err)
 			}
 			cs := connectTestClient(t, srv)
+			discoverTestTools(t, cs)
 			for _, tool := range []string{"kea_config_set", "kea_raw_command"} {
 				for _, arguments := range []string{`{"nested":{"id":9007199254740993,"max":9223372036854775807}}`, `[9007199254740993,-9007199254740993]`, `9007199254740993`, `null`, ""} {
 					input := `{"service":"dhcp4"`

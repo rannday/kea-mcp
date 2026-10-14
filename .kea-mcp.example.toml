@@ -3,18 +3,20 @@
 mode = "control-agent"
 # Optional Control Agent targets; omit to probe agent, dhcp4, dhcp6, and d2.
 # services = ["agent", "dhcp4"]
-# Restrict every tool/resource to reviewed read commands; unknown commands deny.
-read_only = false
-# Maximum HTTP response body bytes (default 64 MiB); increase for large listings.
-# max_response_bytes = 67108864
-url = "https://kea.example:8443"
-username = "YOUR_API_USERNAME"
-password = "YOUR_API_PASSWORD"
-
 # For a direct daemon endpoint:
 # mode = "direct"
 # service = "dhcp4" # dhcp4, dhcp6, or d2
 
+# Restrict every tool/resource to reviewed read commands; unknown commands deny.
+read_only = false
+
+# Maximum HTTP response body bytes (default 64 MiB); increase for large listings.
+# max_response_bytes = 67108864
+# HTTP request timeout in seconds (default 5); CLI --read-timeout-sec overrides.
+# read_timeout_sec = 90
+url = "https://kea.example:8443"
+username = "YOUR_API_USERNAME"
+password = "YOUR_API_PASSWORD"
 # Alternatively replace password with:
 # password_env = "KEA_API_PASSWORD"
 # Or a password file (relative to this TOML file, or an absolute path):

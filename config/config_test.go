@@ -219,6 +219,29 @@ func TestResponseLimitConfiguration(t *testing.T) {
 	}
 }
 
+func TestReadTimeoutConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  int64
+		fail  bool
+	}{
+		{"", 0, false}, {"90", 90, false}, {"9223372036", 9223372036, false},
+		{"0", 0, true}, {"-1", 0, true}, {"9223372037", 0, true},
+		{"1.5", 0, true}, {"'90'", 0, true},
+	} {
+		path := filepath.Join(t.TempDir(), ".kea-mcp.toml")
+		body := "[api]\nurl='https://kea.example'\nusername='test'\npassword='test'\n"
+		if tc.value != "" {
+			body += "read_timeout_sec=" + tc.value
+		}
+		writeConfig(t, path, body)
+		cfg, err := Load(path)
+		if (err != nil) != tc.fail || (err == nil && cfg.ReadTimeoutSec != tc.want) {
+			t.Fatalf("timeout %s: got %d, error %v", tc.value, cfg.ReadTimeoutSec, err)
+		}
+	}
+}
+
 func TestServiceAndToolConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		name, settings string

@@ -9,11 +9,12 @@ import (
 type ResultCode int
 
 const (
-	ResultSuccess        ResultCode = 0
-	ResultGeneralFailure ResultCode = 1
-	ResultUnsupported    ResultCode = 2
-	ResultEmpty          ResultCode = 3
-	ResultConflict       ResultCode = 4
+	ResultSuccess         ResultCode = 0
+	ResultGeneralFailure  ResultCode = 1
+	ResultUnsupported     ResultCode = 2
+	ResultEmpty           ResultCode = 3
+	ResultConflict        ResultCode = 4
+	ResultRollbackFailure ResultCode = 5
 )
 
 // ResultError converts a ResultCode to an error.
@@ -28,10 +29,29 @@ func (r ResultCode) ResultError(text string) error {
 		return fmt.Errorf("unsupported command: %s", text)
 	case ResultConflict:
 		return fmt.Errorf("conflict: %s", text)
+	case ResultRollbackFailure:
+		return fmt.Errorf("partial configuration apply; rollback failed; previous configuration was not restored: %s", text)
 	default:
 		return fmt.Errorf("unknown result code %d: %s", r, text)
 	}
 }
+
+// ResponseError retains all valid Kea envelopes when any service reports failure.
+type ResponseError struct {
+	Responses []CommandResponse
+	Err       error
+}
+
+func (e *ResponseError) Error() string { return e.Err.Error() }
+func (e *ResponseError) Unwrap() error { return e.Err }
+
+// OutcomeUnknownError means a dispatched write has no definitive Kea response.
+type OutcomeUnknownError struct{ Err error }
+
+func (e *OutcomeUnknownError) Error() string {
+	return fmt.Sprintf("write outcome unknown; the command may have applied; reconcile server state before retrying: %v", e.Err)
+}
+func (e *OutcomeUnknownError) Unwrap() error { return e.Err }
 
 // Service represents a Kea service name.
 type Service string

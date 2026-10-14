@@ -29,6 +29,14 @@ func connectTestClient(t *testing.T, server *sdkmcp.Server) *sdkmcp.ClientSessio
 	return cs
 }
 
+func discoverTestTools(t *testing.T, cs *sdkmcp.ClientSession) {
+	t.Helper()
+	result, err := cs.CallTool(context.Background(), &sdkmcp.CallToolParams{Name: "kea_discover", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("discovery: %v %v", result, err)
+	}
+}
+
 func TestPartialDeploymentAndToolRefresh(t *testing.T) {
 	var mu sync.Mutex
 	commands := []string{"status-get", "config-set", "custom-get"}
@@ -62,6 +70,7 @@ func TestPartialDeploymentAndToolRefresh(t *testing.T) {
 	}
 	cs := connectTestClient(t, srv)
 	ctx := context.Background()
+	discoverTestTools(t, cs)
 	assertTools := func(want ...string) {
 		t.Helper()
 		result, err := cs.ListTools(ctx, nil)

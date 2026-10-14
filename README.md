@@ -58,6 +58,12 @@ HTTP response bodies are limited to 64 MiB by default. Set a positive integer
 9223372036854775806). Oversized replies fail explicitly; no partial response is
 reported as success. Prefer paginated lease queries for large deployments.
 
+Kea HTTP requests have a five-second timeout by default. Set `[api]`
+`read_timeout_sec` to a positive integer in seconds (maximum 9223372036),
+or pass `--read-timeout-sec N` to override the TOML value. Despite its name,
+this bounds the entire HTTP request, including connecting and reading the body.
+Increase it for commands that take longer, such as large configuration updates.
+
 Copy [.kea-mcp.example.toml](.kea-mcp.example.toml) to a discovered location, or
 use a custom path. A direct DHCPv4 configuration looks like:
 
@@ -65,6 +71,7 @@ use a custom path. A direct DHCPv4 configuration looks like:
 [api]
 mode = "direct"
 service = "dhcp4"
+read_timeout_sec = 90
 url = "https://kea.example:8443"
 username = "YOUR_API_USERNAME"
 password = "YOUR_API_PASSWORD"
@@ -95,8 +102,9 @@ MCP servers. Add this to your Codex `config.toml`:
 [mcp_servers.kea]
 default_tools_approval_mode = "prompt"
 command = "/absolute/path/to/kea-mcp"
-args = ["--config", "/absolute/path/to/.kea-mcp.toml"]
+args = ["--config", "/absolute/path/to/.kea-mcp.toml", "--read-timeout-sec", "90"]
 startup_timeout_sec = 90
+tool_timeout_sec = 420
 ```
 
 Use `kea-mcp.exe` on Windows and TOML literal strings or forward slashes for
@@ -104,6 +112,13 @@ Windows paths. For discovery instead, omit `args` and set
 `cwd = "/absolute/path/to/project"`. The agent configuration launches the
 process; the separate `.kea-mcp.toml` supplies Kea settings. These options
 are documented in the [Codex MCP documentation](https://developers.openai.com/codex/mcp/).
+
+`startup_timeout_sec` and `tool_timeout_sec` are Codex client settings, not
+Kea server TOML settings. Pass the server's timeout through `args` as shown;
+adding a custom `read_timeout_sec` key beneath `[mcp_servers.kea]` does not
+configure this process. Allow time for multiple requests per tool: discovery
+can query four services sequentially, and commands probe availability before
+execution. MCP initialization itself sends no Kea requests.
 
 Clients using JSON configuration can use:
 
@@ -134,7 +149,9 @@ Clients using JSON configuration can use:
 Read live configuration through `kea_config_get` so the client's tool approval
 rules apply. Configuration is not exposed as an MCP resource.
 
-Startup probes `list-commands` on configured services. Dedicated tools expose
+Run `kea_discover` first (or read `kea://api/commands`) to probe `list-commands`
+and register dedicated tools. Startup exposes discovery and the optional raw
+tool immediately, even when Kea is unavailable. Dedicated tools expose
 only commands present in both the live inventory and the reviewed access policy;
 read-only mode also hides write tools. Unknown live commands appear in discovery
 when read-only mode is off, but require an opted-in raw tool to execute.
@@ -143,6 +160,14 @@ Commands depend on version, daemon, and loaded hooks; the
 commands your deployment lacks. Each command call rechecks availability on its
 selected service before dispatch. This does not guarantee availability between
 the probe and execution; Kea still validates the request. Mutations are not retried.
+
+Failed commands return MCP `isError` with structured `service`, `command`,
+`error`, and all valid Kea `responses`, including result codes, text, and
+arguments. Mixed success/failure replies preserve every envelope. Result 5
+explicitly reports partial configuration application and failed rollback;
+the previous configuration was not restored. A dispatched write without a
+definitive reply (timeout, connection failure, malformed or oversized response)
+reports `outcome_unknown = true`. Reconcile Kea state before retrying it.
 
 Run `kea_discover` after daemon or hook changes. Refresh adds/removes tools and
 sends MCP tool-list change notifications; the agent client must support refreshing

@@ -3,6 +3,7 @@ package kea
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -51,6 +52,10 @@ func CallCommandWithArguments(ctx context.Context, c *Client, cmd string, argume
 
 	var res []CommandResponse
 	if err := c.Call(ctx, req, &res); err != nil {
+		var responseErr *ResponseError
+		if errors.As(err, &responseErr) {
+			return responseErr.Responses, fmt.Errorf("%s failed: %w", cmd, err)
+		}
 		return nil, fmt.Errorf("%s failed: %w", cmd, err)
 	}
 	if len(res) == 0 {
@@ -58,7 +63,7 @@ func CallCommandWithArguments(ctx context.Context, c *Client, cmd string, argume
 	}
 	for _, r := range res {
 		if err := r.Result.ResultError(r.Text); err != nil {
-			return nil, err
+			return res, err
 		}
 	}
 	return res, nil
@@ -77,6 +82,10 @@ func callCommand(ctx context.Context, c *Client, cmd string, services ...Service
 
 	var res []CommandResponse
 	if err := c.Call(ctx, req, &res); err != nil {
+		var responseErr *ResponseError
+		if errors.As(err, &responseErr) {
+			return responseErr.Responses, fmt.Errorf("%s failed: %w", cmd, err)
+		}
 		return nil, fmt.Errorf("%s failed: %w", cmd, err)
 	}
 	if len(res) == 0 {
@@ -84,7 +93,7 @@ func callCommand(ctx context.Context, c *Client, cmd string, services ...Service
 	}
 	for _, r := range res {
 		if err := r.Result.ResultError(r.Text); err != nil {
-			return nil, err
+			return res, err
 		}
 	}
 	return res, nil
