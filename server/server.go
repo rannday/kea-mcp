@@ -18,7 +18,8 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.1.0"
+// version is set by buildx for deployment archives.
+var version = "dev"
 
 var controlAgentServices = []kea.Service{
 	kea.Services.Agent,

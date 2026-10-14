@@ -8,10 +8,10 @@ Configuration uses TOML.
 
 ## Installation
 
-For deployment snapshots, download the archives and checksum manifest from a
-successful CI run. See [Deployment and operations](docs/deployment.md) for
-installation, verification, upgrades, and recovery. Snapshots are identified by
-commit; tagged releases will follow once production validation is complete.
+Download a platform archive and `checksums.txt` from
+[GitHub Releases](https://github.com/rannday/kea-mcp/releases). CI also provides
+snapshots identified by commit. See [Deployment and operations](docs/deployment.md)
+for installation, verification, upgrades, and recovery.
 
 Install with Go 1.27.2 or newer:
 
