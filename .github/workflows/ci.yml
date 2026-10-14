@@ -4,6 +4,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '23 7 * * 1'
 
 permissions:
   contents: read
@@ -60,3 +62,67 @@ jobs:
       - name: Test with race detector
         if: runner.os == 'Linux'
         run: go test -race -count=1 -timeout=5m ./...
+
+  vulnerability:
+    name: Vulnerability check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install pinned vulnerability checker
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - name: Check vulnerabilities
+        run: govulncheck ./...
+
+  artifacts:
+    name: Build deployment archives
+    needs: [check, vulnerability]
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Build snapshots with pinned buildx
+        shell: bash
+        run: go tool buildx -v "snapshot-${GITHUB_SHA}" --name kea-mcp --main . --out dist
+      - name: Verify archives and smoke-test Linux executable
+        shell: bash
+        run: |
+          cd dist
+          sha256sum --check checksums.txt
+          mkdir smoke
+          tar -xzf "kea-mcp-snapshot-${GITHUB_SHA}-linux-amd64.tar.gz" -C smoke
+          ./smoke/kea-mcp --help
+      - name: Upload deployment archives
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kea-mcp-snapshot-${{ github.sha }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/checksums.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

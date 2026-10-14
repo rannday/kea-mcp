@@ -1,4 +1,2 @@
-*.exe
-*.test
-/bin/
-.kea-mcp.toml
+/dist/
+/.kea-mcp.toml
